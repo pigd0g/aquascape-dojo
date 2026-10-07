@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aquascape Dojo · 造景道場</title>
+</head>
+<body>
+  <div id="app">
+    <div id="viewport">
+      <div id="topbar">
+        <div class="tgroup">
+          <button id="tool-select" class="tbtn active" title="Select / arrange (Esc)">⬚ Select</button>
+          <button id="tool-sculpt" class="tbtn" title="Substrate sculpting">⛰ Sculpt</button>
+        </div>
+        <div class="tgroup">
+          <button id="mode-move" class="tbtn active" title="Move (G)">✥ Move</button>
+          <button id="mode-rotate" class="tbtn" title="Rotate (R)">⟳ Rotate</button>
+          <button id="mode-scale" class="tbtn" title="Scale (S)">⤢ Scale</button>
+        </div>
+        <div class="tgroup">
+          <button id="act-undo" class="tbtn" title="Undo (Ctrl+Z)">↩</button>
+          <button id="act-redo" class="tbtn" title="Redo (Ctrl+Y)">↪</button>
+          <button id="act-settle" class="tbtn" title="Drop everything onto the substrate">⭓ Settle All</button>
+        </div>
+        <div class="tgroup spring"></div>
+        <div class="tgroup">
+          <button id="act-theme" class="tbtn" title="Toggle light / dark">☀️</button>
+          <button id="act-water" class="tbtn" title="Fill the tank with water">💧 Water</button>
+          <button id="act-shot" class="tbtn" title="Download PNG snapshot">📷</button>
+          <button id="act-save" class="tbtn" title="Save layout (.json)">💾</button>
+          <button id="act-load" class="tbtn" title="Open layout (.json)">📂</button>
+          <input type="file" id="file-load" accept=".json,application/json" hidden />
+        </div>
+      </div>
+      <div id="hint">Drag items from the library onto the tank · click to select · G / R / S = move, rotate, scale</div>
+      <div id="statusbar"><div id="chips"></div></div>
+    </div>
+    <aside id="panel">
+      <header class="brand">
+        <h1>DOJO <span class="kanji">造景道場</span></h1>
+        <p class="tag">virtual aquascape layout studio</p>
+      </header>
+      <nav id="tabs">
+        <button class="tab active" data-tab="rocks">🪨<span>Rocks</span></button>
+        <button class="tab" data-tab="wood">🪵<span>Wood</span></button>
+        <button class="tab" data-tab="plants">🌿<span>Plants</span></button>
+        <button class="tab" data-tab="substrate">⛰️<span>Ground</span></button>
+        <button class="tab" data-tab="tank">🛠️<span>Tank</span></button>
+      </nav>
+      <div id="panes">
+        <div class="pane" id="pane-rocks"><div class="cards" data-cards="rock"></div><p class="note">Drag a stone onto the tank. Select it to resize, reroll its shape or retint it.</p></div>
+        <div class="pane hidden" id="pane-wood"><div class="cards" data-cards="wood"></div><p class="note">Every branch is procedurally grown — reroll until you love the piece.</p></div>
+        <div class="pane hidden" id="pane-plants"><div class="cards" data-cards="plant"></div><p class="note">Drag plants in, then tint and scale them. Carpets and moss patches scale their spread.</p></div>
+        <div class="pane hidden" id="pane-substrate"></div>
+        <div class="pane hidden" id="pane-tank"></div>
+      </div>
+      <section id="inspector" class="hidden"></section>
+    </aside>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
