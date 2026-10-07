@@ -60,7 +60,7 @@ Live chips along the bottom report tank volume in litres, substrate litres + kg,
 ## Procedural generation notes
 - **Rocks** are noise-displaced icospheres: Ohko gets horizontal strata + deep ridged crevices; Seiryu gets angular facets + dark veining; lava rock gets pores; slate gets vertical banding. Every instance is seeded — reroll until you like it.
 - **Wood** grows recursively: a tapered trunk with gnarl noise, spread-angled children, plus spiderwood's curling root tendrils, merged into one mesh with a generated bark texture.
-- **Plants** (13 species) cover rosettes (swords, anubias, crypts), ferns (java, bolbitis with pinnae along stems), grasses (hairgrass, blyxa), tape-grass ribbons (vallisneria), stem plants (rotala, ludwigia — hue-shift them toward red), and moss/carpet patches.
+- **Plants** (11 species) cover rosettes (swords, anubias, crypts), solid-leaf ferns (java fern ruffled blades), grasses (hairgrass, blyxa), tape-grass ribbons (vallisneria), stem plants (ludwigia — hue-shift them toward red), and moss/carpet patches. All species render in one calibrated rich aquarium-green window.
 - **Substrate** is a heightfield (~85×55 cells) with a canvas splat map blending the top-dress layer in a shader; the calculator integrates the heightfield for litre-accurate volume.
 
 ## Project structure
@@ -72,7 +72,7 @@ src/tank.js           parametric glass tank, stand, water
 src/substrate.js      heightfield sculpting, splat shader, materials
 src/hardscape.js      procedural rocks
 src/wood.js           procedural driftwood
-src/plants.js         13 plant species
+src/plants.js         11 plant species
 src/placement.js      drag & drop, gizmos, settle, undo, serialization
 src/palette.js        library UI + inspector
 src/calculator.js     material chips

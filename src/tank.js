@@ -56,9 +56,10 @@ export class Tank {
       ior: 1.0,
       specularIntensity: 0.08,
       reflectivity: 0.2,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,   // box panes: outer faces only — DoubleSided adds a
+                               // second layer whose gradient bands visibly crawl
       depthWrite: false,
-      dithering: true,   // glass catches the spotlight cone → banding crawl
+      dithering: true,
     });
     this._glassMat = glassMat;
 

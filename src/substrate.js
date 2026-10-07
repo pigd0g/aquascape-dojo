@@ -89,46 +89,68 @@ export class Substrate {
       ...Array.from({ length: sw + 1 }, (_, i) => sd * W1 + (sw - i)),      // back
       ...Array.from({ length: sd + 1 }, (_, j) => (sd - j) * W1 + 0),       // left
     ];
-    // build indices for skirt quads using duplicated bottom verts
+    // Skirt with DEDICATED vertices: quads below the rim must not reuse the
+    // rim's top-surface verts, because those carry the granular top UVs
+    // (v spanning the whole tiled texture) — a tall thin strip minifying the
+    // full grain texture collapses to per-column averages = the vertical
+    // barcode banding that shimmers on every camera move. So: ring A = copy
+    // of rim (tracks heights, side-texture UVs), ring B = bottom edge at
+    // skirtY. Skirt quads use only A/B verts; the top surface keeps the
+    // originals. Group 0 = top (granular mat) · group 1 = skirt (side mat).
     const bottomStart = vertCount;
-    const totalVerts = vertCount * 2;
+    const skirtTopStart = vertCount + rimTopIdx.length;
+    const totalVerts = vertCount + rimTopIdx.length * 2;
     const allPositions = new Float32Array(totalVerts * 3);
     allPositions.set(positions);
+    const skirtBaseU = new Float32Array(rimTopIdx.length);  // arc-length param
+    let acc = 0;
     for (let s = 0; s < rimTopIdx.length; s++) {
       const t = rimTopIdx[s];
-      allPositions[(bottomStart + t) * 3] = positions[t * 3];
-      allPositions[(bottomStart + t) * 3 + 1] = skirtY;
-      allPositions[(bottomStart + t) * 3 + 2] = positions[t * 3 + 2];
+      if (s > 0) {
+        const p = rimTopIdx[s - 1];
+        acc += Math.hypot(positions[t * 3] - positions[p * 3], positions[t * 3 + 2] - positions[p * 3 + 2]);
+      }
+      skirtBaseU[s] = acc;
+      // ring A: same x/y/z as rim (updated in _refresh)
+      allPositions[(skirtTopStart + s) * 3] = positions[t * 3];
+      allPositions[(skirtTopStart + s) * 3 + 1] = positions[t * 3 + 1];
+      allPositions[(skirtTopStart + s) * 3 + 2] = positions[t * 3 + 2];
+      // ring B: bottom edge at skirtY
+      allPositions[(bottomStart + s) * 3] = positions[t * 3];
+      allPositions[(bottomStart + s) * 3 + 1] = skirtY;
+      allPositions[(bottomStart + s) * 3 + 2] = positions[t * 3 + 2];
     }
+    const perimeter = acc || 1;
     let geoFinal = geo;
     {
       const skirtIdx = [];
       const R = rimTopIdx.length;
       for (let s = 0; s < R; s++) {
-        const t0 = rimTopIdx[s];
-        const t1 = rimTopIdx[(s + 1) % R];
-        const b0 = bottomStart + t0;
-        const b1 = bottomStart + t1;
-        skirtIdx.push(t0, t1, b0, t1, b1, b0);
+        const s2 = (s + 1) % R;
+        const a0 = skirtTopStart + s, a1 = skirtTopStart + s2;
+        const b0 = bottomStart + s, b1 = bottomStart + s2;
+        // winding matches the original skirt strip (outward faces)
+        skirtIdx.push(a0, a1, b0, a1, b1, b0);
       }
       // The skirt (vertical cut face) gets its OWN material via geometry
-      // groups: a granular top texture minified into a tall thin strip
-      // collapses to per-column averages = vertical barcode banding that
-      // shimmers on camera motion. Group 0 = top granular, group 1 = skirt.
+      // groups: group 0 = top granular, group 1 = skirt side texture.
       const topCount = indices.length;
       const newIdx = new Uint32Array(indices.length + skirtIdx.length);
       newIdx.set(indices, 0);
       newIdx.set(skirtIdx, indices.length);
       geoFinal.addGroup(0, topCount, 0);
       geoFinal.addGroup(topCount, skirtIdx.length, 1);
-      // skirt UVs: u spans the edge as-is; v maps the strip onto the dedicated
-      // side texture (top of strip = top of face)
+      // skirt UVs: u = arc length / tile (≈ one side-texture tile per 30cm),
+      // v: ring A at the top of the side texture, ring B at its bottom
+      const V_TOP = 0.92, V_BOT = 0.04;
       const allUv = new Float32Array(totalVerts * 2);
       allUv.set(uvs);
       for (let s = 0; s < rimTopIdx.length; s++) {
-        const t = rimTopIdx[s];
-        allUv[(bottomStart + t) * 2] = uvs[t * 2];
-        allUv[(bottomStart + t) * 2 + 1] = 0.06;    // near top of side texture
+        const uSide = (skirtBaseU[s] / perimeter) * Math.max(1, Math.round((w) / 30));
+        allUv[(skirtTopStart + s) * 2] = uSide;
+        allUv[(skirtTopStart + s) * 2 + 1] = V_TOP;
+        allUv[(bottomStart + s) * 2] = uSide;
+        allUv[(bottomStart + s) * 2 + 1] = V_BOT;
       }
       geoFinal.setAttribute('position', new THREE.BufferAttribute(allPositions, 3));
       geoFinal.setAttribute('uv', new THREE.BufferAttribute(allUv, 2));
@@ -137,6 +159,9 @@ export class Substrate {
 
     this._topVertCount = vertCount;
     this._botStart = bottomStart;
+    this._skirtTopStart = skirtTopStart;
+    this._skirtCount = rimTopIdx.length;
+    geo.userData.rimTopIdx = rimTopIdx;
 
     this.mesh = new THREE.Mesh(geoFinal, null);
     this.mesh.name = 'substrateMesh';
@@ -270,8 +295,62 @@ export class Substrate {
     mat.customProgramCacheKey = () => 'substrate';
     this.material = mat;
     this._uniforms = uniforms;
-    this.mesh.material = mat;
+    // side material for the vertical cut face (group 1): soft horizontal
+    // banding — reads as compacted substrate layers, immune to minification
+    // streaks because its features are wide & low-contrast
+    if (!this._sideMat) {
+      this._sideMat = new THREE.MeshStandardMaterial({
+        map: Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed),
+        roughness: SUBSTRATES[this.baseType].rough,
+        metalness: 0,
+        dithering: true,
+      });
+    } else {
+      this._sideMat.map = Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed);
+      this._sideMat.needsUpdate = true;
+    }
+    this._sideMat.roughness = SUBSTRATES[this.baseType].rough;
+    this.mesh.material = [mat, this._sideMat];
     this._updateRepeat();
+  }
+
+  /** Side-cut texture: dark base with soft horizontal stratification bands. */
+  static _makeSideTexture(typeKey, tint, grainSeed = 1234) {
+    const def = SUBSTRATES[typeKey];
+    const S = 512;
+    const cv = document.createElement('canvas');
+    cv.width = S; cv.height = S;
+    const ctx = cv.getContext('2d');
+    const rnd = mulberry32((grainSeed || 1234) + tint * 31 + typeKey.length * 17 + 977);
+    const col = new THREE.Color(def.base);
+    // sides read darker than the lit top face
+    col.multiplyScalar(0.55);
+    const [r, g, b] = [col.r * 255, col.g * 255, col.b * 255];
+    ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
+    ctx.fillRect(0, 0, S, S);
+    // soft horizontal strata bands (compacted layers)
+    for (let i = 0; i < 26; i++) {
+      const y = rnd() * S;
+      const h = 6 + rnd() * 26;
+      const shade = (rnd() - 0.5) * 0.16 * 255;
+      const gr = ctx.createLinearGradient(0, y, 0, y + h);
+      gr.addColorStop(0, `rgba(${clamp(r + shade, 0, 255) | 0},${clamp(g + shade, 0, 255) | 0},${clamp(b + shade, 0, 255) | 0},0.5)`);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = gr;
+      ctx.fillRect(0, y, S, h);
+    }
+    // faint grain speckle (low contrast, soft)
+    for (let i = 0; i < 4200; i++) {
+      const x = rnd() * S, y = rnd() * S;
+      const v = (rnd() - 0.5) * 0.1 * 255;
+      ctx.fillStyle = `rgba(${clamp(r + v, 0, 255) | 0},${clamp(g + v, 0, 255) | 0},${clamp(b + v, 0, 255) | 0},0.2)`;
+      ctx.fillRect(x, y, 2.2, 1.4);
+    }
+    const tex = new THREE.CanvasTexture(cv);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 16;
+    return tex;
   }
 
   _updateRepeat() {
@@ -330,6 +409,17 @@ export class Substrate {
     const pos = this.mesh.geometry.attributes.position;
     const H = this.heights;
     for (let k = 0; k < H.length; k++) pos.array[k * 3 + 1] = H[k];
+    // skirt ring A mirrors the rim heights so the vertical face follows sculpting
+    if (this._skirtTopStart !== undefined) {
+      const geo = this.mesh.geometry;
+      const { rimTopIdx } = geo.userData;
+      if (rimTopIdx) {
+        for (let s = 0; s < rimTopIdx.length; s++) {
+          const t = rimTopIdx[s];
+          pos.array[(this._skirtTopStart + s) * 3 + 1] = H[t];
+        }
+      }
+    }
     pos.needsUpdate = true;
     this.mesh.geometry.computeVertexNormals();
     this.mesh.geometry.computeBoundingSphere();
@@ -517,6 +607,14 @@ export class Substrate {
     this.material.bumpMap = this._baseTex;
     this.material.roughness = SUBSTRATES[this.baseType].rough;
     this.material.needsUpdate = true;
+    // side texture follows the base type too
+    if (this._sideMat) {
+      const oldSide = this._sideMat.map;
+      this._sideMat.map = Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed);
+      this._sideMat.roughness = SUBSTRATES[this.baseType].rough;
+      this._sideMat.needsUpdate = true;
+      oldSide?.dispose();
+    }
     if (oldBase) oldBase.dispose();
     if (oldDress) oldDress.dispose();
   }
@@ -532,6 +630,7 @@ export class Substrate {
   dispose() {
     this.mesh.geometry.dispose();
     this.material.dispose();
+    this._sideMat?.dispose();
     this._baseTex?.dispose();
     this._dressTex?.dispose();
     this.splatTex.dispose();

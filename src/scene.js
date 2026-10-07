@@ -16,7 +16,7 @@ const EVENING = {
   amb: 0.17, ambColor: 0x8a7a68,
   key: 0.8, keyColor: 0xffc487,
   fill: 0.35, rim: 0.85,
-  lamp: 5200,
+  lamp: 2600,
   exposure: 1.22,
 };
 const DAY = {
@@ -245,8 +245,10 @@ export function createScene(container) {
 
   // display light over the tank (aquarium-style)
   // wide cone with near-max penumbra: tall sculpted terrain must not get a
-  // hard lit/unlit cone-edge line crawling across faces while orbiting
-  const spot = new THREE.SpotLight(0xfff6e4, 3200, 320, Math.PI / 3.1, 0.9, 1.1);
+  // hard lit/unlit cone-edge line crawling across faces while orbiting.
+  // 4300/d² ≈ 0.22-0.8 across the tank: spot-lit leaf faces stay rich green
+  // (sweep-calibrated; higher clips flat top leaves to pale sage after ACES).
+  const spot = new THREE.SpotLight(0xfff6e4, 4300, 320, Math.PI / 3.1, 0.9, 2);
   spot.position.set(0, 96, 12);
   spot.castShadow = true;
   spot.shadow.mapSize.set(2048, 2048);

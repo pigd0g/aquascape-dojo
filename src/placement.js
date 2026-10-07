@@ -583,9 +583,8 @@ export function spawnFromData(s) {
     if (s.kindKey === 'rock') obj = createRock(s.typeKey, rnd);
     else if (s.kindKey === 'wood') obj = createWood(s.typeKey, rnd);
     else if (s.kindKey === 'plant') obj = createPlant(s.typeKey, rnd, s.scaleMul ?? 1);
-  } catch (err) {
-    console.error('spawnFromData failed', err);
-    return null;
+  } catch {
+    // deleted/renamed catalogue entries (e.g. bolbitis/rotala) are skipped silently
   }
   if (!obj) return null;
   obj.userData.id = ++Placement._nextId;

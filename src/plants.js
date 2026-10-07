@@ -58,15 +58,30 @@ function leafGeometryOval(len, width, seg = 5) {
   return g;
 }
 
-function makeLeafMaterial(col, rough = 0.62) {
+// Rich aquarium-plant green, immune to the gallery rig's highlights.
+// Every leaf material passes through here: hue is held inside the green band,
+// lightness stays in a narrow dark window calibrated against the ACES response
+// of the key/fill/rim/spot/lamp stack (measured pixel probes, not eyeballed):
+// pale L>0.2 desaturates to yellow-white under any lit face, L<0.05 turns
+// mossy black in shadow. Hue band centres on 0.35 because the warm evening
+// lights pull rendered hue ~15° toward yellow — 0.35 lands back on true
+// aquarium green (~120°) after lighting.
+const GREEN_HUE = [0.30, 0.40];
+const LEAF_L = [0.06, 0.105];
+const LEAF_S = 0.86;
+function makeLeafMaterial(col) {
   // the gallery rig (key+fill+rim+spot+amb) sums to ~4.5× on lit faces —
-  // leaves must be authored dark (L~0.24-0.3) to render rich green instead
-  // of clipping to white
+  // leaves must be authored dark to render rich green instead of clipping
   const hsl = {};
   col.getHSL(hsl);
-  col.setHSL(hsl.h, Math.max(0.5, hsl.s), Math.min(0.3, hsl.l));
+  // hold hue in the green band (wrap-aware), saturate and darken into the
+  // calibrated rich-green window
+  let h = ((hsl.h % 1) + 1) % 1;
+  if (h > 0.5) h = GREEN_HUE[0];   // reds/violets/magentas wrap to the band floor
+  h = Math.max(GREEN_HUE[0], Math.min(GREEN_HUE[1], h));
+  col.setHSL(h, Math.max(LEAF_S, hsl.s), Math.max(LEAF_L[0], Math.min(LEAF_L[1], hsl.l)));
   return new THREE.MeshStandardMaterial({
-    color: col, roughness: rough, metalness: 0, side: THREE.DoubleSide, dithering: true,
+    color: col, roughness: 0.8, metalness: 0, side: THREE.DoubleSide, dithering: true,
   });
 }
 
@@ -83,8 +98,10 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
   const hue = def.huer[0] + rnd() * (def.huer[1] - def.huer[0]);
   const sat = def.sat[0] + rnd() * (def.sat[1] - def.sat[0]);
 
-  const mat = makeLeafMaterial(new THREE.Color().setHSL(green, sat, 0.27));
-  const mat2 = makeLeafMaterial(new THREE.Color().setHSL(clamp(green + 0.035, 0, 1), sat * 0.92, 0.34));
+  // two leaf tones per plant: base + slightly lighter highlight (both pushed
+  // into the calibrated rich-green window by makeLeafMaterial)
+  const mat = makeLeafMaterial(new THREE.Color().setHSL(green, sat, 0.095));
+  const mat2 = makeLeafMaterial(new THREE.Color().setHSL(clamp(green + 0.03, 0, 1), sat, 0.125));
 
   const kind = def.kind ?? 'stem';
   const rndRange = (a, b) => a + rnd() * (b - a);
@@ -92,12 +109,16 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
   // ---- kinds ----
   if (kind === 'sword') {
     const leaves = Math.round(rndRange(def.leaves[0], def.leaves[1]));
+    // ruffle: fern-style def (widthF >= 5) ruffles all leaves in one direction
+    // (classic java-fern blade undulation); broad swords only get the old
+    // mild random twist
+    const ruffle = def.widthF[0] >= 5 ? 0.9 : 0;
     for (let i = 0; i < leaves; i++) {
       const t = i / leaves;
       const len = H * (0.55 + 0.45 * Math.sin(t * Math.PI) ** 0.7) * (0.8 + rnd() * 0.4);
       const wf = rndRange(def.widthF[0], def.widthF[1]);
       const arch = def.arch * (0.6 + rnd() * 0.8);
-      const g = bladeGeometry(len, len / wf, arch, (rnd() - 0.5) * 0.6, 7);
+      const g = bladeGeometry(len, len / wf, arch, ruffle + (rnd() - 0.5) * 0.6, 7);
       const leaf = new THREE.Mesh(g, i % 3 === 0 ? mat2 : mat);
       const a = (i / leaves) * Math.PI * 2 + rnd() * 0.5;
           // outer leaves arch outward, inner stay upright
@@ -119,7 +140,7 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
     const leaves = Math.round(rndRange(def.leaves[0], def.leaves[1]));
     // rhizome
     const rzh = new THREE.CylinderGeometry(H * 0.05, H * 0.06, H * 0.5, 6);
-    const rzhMesh = new THREE.Mesh(rzh, makeLeafMaterial(new THREE.Color().setHSL(0.28, 0.4, 0.2)));
+    const rzhMesh = new THREE.Mesh(rzh, makeLeafMaterial(new THREE.Color().setHSL(0.28, 0.45, 0.09)));
     rzhMesh.rotation.z = Math.PI / 2;
     rzhMesh.position.y = H * 0.06;
     group.add(rzhMesh);
@@ -159,8 +180,10 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
       group.add(petiole, leaf);
     }
   } else if (kind === 'fern') {
+    // no current species uses the pinnae fern — kept for save compat with
+    // old layouts that spawned one before bolbitis/javafern were reworked
     const fronds = Math.round(rndRange(def.leaves[0], def.leaves[1]));
-    const rib = Math.round(rndRange(def.rib[0], def.rib[1]));
+    const rib = Math.round(rndRange(def.rib[0] ?? 6, def.rib[1] ?? 9));
     for (let i = 0; i < fronds; i++) {
       const len = H * (0.75 + rnd() * 0.4);
       const stem = new THREE.Mesh(new THREE.CylinderGeometry(len * 0.015, len * 0.02, len, 4), mat);
@@ -227,7 +250,7 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
     // Rotala / Ludwigia: several vertical stems with paired oval leaves
     const stemN = Math.round(rndRange(def.stemN[0], def.stemN[1]));
     const perStem = Math.round(rndRange(def.perStem[0], def.perStem[1]));
-    const stemMat = makeLeafMaterial(new THREE.Color().setHSL(green * 0.9, sat, 0.3));
+    const stemMat = makeLeafMaterial(new THREE.Color().setHSL(green * 0.9, sat, 0.10));
     for (let i = 0; i < stemN; i++) {
       const a = (i / stemN) * Math.PI * 2 + rnd() * 0.6;
       const r = H * 0.08 * rnd();
