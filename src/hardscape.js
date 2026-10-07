@@ -8,7 +8,9 @@ const _c = new THREE.Color();
 export function createRock(typeKey, seed = (Math.random() * 1e9) | 0, opts = {}) {
   const def = ROCK_TYPES[typeKey];
   const rnd = mulberry32(seed);
-  const detail = opts.detail ?? 5; // icosphere subdivision
+  // IcosahedronGeometry subdivides each edge `detail` times → 20*(detail+1)^2
+  // triangles. 30 ≈ 19.2k tris / 57k verts — smooth-shaded rounded rocks.
+  const detail = opts.detail ?? 30;
 
   const geo = new THREE.IcosahedronGeometry(1, detail);
   const pos = geo.attributes.position;
@@ -32,11 +34,13 @@ export function createRock(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
   // noise field, so rerolling genuinely regrows the silhouette
   const ox = rnd() * 250, oy = rnd() * 250, oz = rnd() * 250;
   // per-seed squash: flatten or elongate along random axes
-  const sq = new THREE.Vector3(
-    1 + (rnd() - 0.5) * 0.55,
-    1 + (rnd() - 0.5) * 0.55,
-    1 + (rnd() - 0.5) * 0.55
-  );
+  // (flattened types like river pebbles keep the squash horizontal only,
+  //  and never let Y exceed X so they always read as lying flat)
+  const squashY = def.flatten ? 0.15 : 0.55;
+  let sqx = 1 + (rnd() - 0.5) * 0.55;
+  let sqy = 1 + (rnd() - 0.5) * squashY;
+  if (def.flatten && sqy > sqx) sqy = sqx * 0.92;
+  const sq = new THREE.Vector3(sqx, sqy, 1 + (rnd() - 0.5) * 0.55);
 
   for (let i = 0; i < pos.count; i++) {
     const dx = dirs[i * 3], dy = dirs[i * 3 + 1], dz = dirs[i * 3 + 2];
@@ -45,7 +49,7 @@ export function createRock(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
 
     // base lumpiness
     let lump = fbm(sx, sy, sz, 4) - 0.5;
-    dr += lump * 0.55;
+    dr += lump * 0.62;
 
     // faceting: quantize direction to create flat-ish planes (angular stones)
     if (angular > 0.01) {
@@ -65,10 +69,10 @@ export function createRock(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
 
     // ridged crevices
     const rv = ridge(sx * 0.8, sy * 0.8, sz * 0.8, 3);
-    dr -= (1 - rv) * crev * 0.5;
+    dr -= (1 - rv) * crev * 0.55;
 
     // fine grain
-    dr += (fbm(sx * 3.2, sy * 3.2, sz * 3.2, 2) - 0.5) * 0.06 * smoothAmt + smoothAmt * 0.04;
+    dr += (fbm(sx * 3.2, sy * 3.2, sz * 3.2, 2) - 0.5) * 0.07 * smoothAmt + smoothAmt * 0.04;
 
     let r = 1 + dr;
     pos.array[i * 3] = dx * r * sq.x;
@@ -80,7 +84,7 @@ export function createRock(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
   if (def.flatten) {
     for (let i = 0; i < pos.count; i++) {
       // relax displacement toward a smooth ellipsoid, then squash
-      pos.array[i * 3 + 1] = pos.array[i * 3 + 1] * 0.25 + 0.75 * dirs[i * 3 + 1] * sq.y * 0.62;
+      pos.array[i * 3 + 1] = pos.array[i * 3 + 1] * 0.25 + 0.75 * dirs[i * 3 + 1] * sq.y * 0.48;
     }
   }
   geo.computeVertexNormals();
@@ -99,22 +103,32 @@ export function createRock(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
     const sx = dx * sc + 10 + ox, sy = dy * sc + 10 + oy, sz = dz * sc + 10 + oz;
     const shade = fbm(dx * 5 + 31, dy * 5, dz * 5, 3);
     _c.copy(mixCol);
-    // strata dark banding matches the displacement bands
+    // strata dark banding (lower frequency than the geometry's so bands stay
+    // readable at high poly — color banding, not per-vertex noise)
     if (def.strata && strataF) {
       const coord = def.strataY ? dy : Math.abs(dy) * 0.4 + (dz * 0.3 + dx * 0.2);
-      const band = Math.sin(coord * strataF) * 0.5 + 0.5;
-      _c.multiplyScalar(0.78 + band * 0.34);
+      const band = Math.sin(coord * strataF * 0.45) * 0.5 + 0.5;
+      _c.multiplyScalar(0.72 + band * 0.38);
     }
     // subtle hue jitter
     const [r1, g1, b1] = hueShiftRGB(_c.r, _c.g, _c.b, hueJitter);
     _c.set(r1, g1, b1);
-    // crevice darkening: sample same shifted noise field as the displacement
-    const rv = ridge(sx * 0.8, sy * 0.8, sz * 0.8, 3);
-    const dark = 1 - (1 - rv) * crev * 0.8;
-    _c.multiplyScalar(clamp(0.62 + shade * 0.7, 0.35, 1.25) * dark);
-    // dirt pooling on upward faces
-    const up = smoothstep(0.55, 1, dy);
-    _c.lerp(new THREE.Color(0x4a3b2c), up * 0.15);
+    if (def.colorFlat) {
+      // smooth waterworn stones: only a whisper of variation, no blotches —
+      // blotchy shading + low roughness reads as metal, not mineral
+      _c.multiplyScalar(0.94 + shade * 0.09);
+    } else {
+      // crevice darkening: sample same shifted noise field as the displacement
+      const rv = ridge(sx * 0.8, sy * 0.8, sz * 0.8, 3);
+      const dark = 1 - (1 - rv) * crev * 0.8;
+      _c.multiplyScalar(clamp(0.38 + shade * 0.58, 0.24, 1.05) * dark);
+      // dirt pooling on upward faces
+      const up = smoothstep(0.55, 1, dy);
+      _c.lerp(new THREE.Color(0x4a3b2c).convertSRGBToLinear(), up * 0.15);
+    }
+    // vertex colors are consumed as linear-sRGB by the renderer — we authored
+    // in sRGB, so convert once or everything renders washed-out pale
+    _c.convertSRGBToLinear();
     colors[i * 3] = _c.r; colors[i * 3 + 1] = _c.g; colors[i * 3 + 2] = _c.b;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));

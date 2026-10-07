@@ -1,8 +1,8 @@
 // Placement: spawn, drag & drop, transform controls, gravity settle, undo/redo.
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { createRock } from './hardscape.js';
-import { createWood } from './wood.js';
+import { createRock, rerollRock } from './hardscape.js';
+import { createWood, rerollWood } from './wood.js';
 import { createPlant } from './plants.js';
 import { ROCK_TYPES, WOOD_TYPES, PLANT_TYPES } from './presets.js';
 
@@ -22,6 +22,7 @@ export class Placement {
     this.redoStack = [];
     this.onChange = null; // set by main
     this.onSelection = null;
+    this.sculptMode = false; // true = LMB belongs to the sculpt brush, not picking
 
     this.group = new THREE.Group();
     this.group.name = 'placed';
@@ -54,6 +55,15 @@ export class Placement {
   }
 
   setOrbit(orbit) { this.orbit = orbit; }
+
+  /** Sculpt mode: left-drag paints/sculpts instead of dragging objects. */
+  setSculptMode(on) {
+    this.sculptMode = on;
+    if (on) {
+      this._dragging = null;
+      this.select(null);
+    }
+  }
 
   // ================= spawning =================
   spawn(kindKey, typeKey) {
@@ -107,6 +117,41 @@ export class Placement {
       this.gizmo.detach();
     }
     this.onSelection && this.onSelection(obj);
+    this.syncRerollBtn();
+  }
+
+  /** Show the top-bar Reroll button only for re-rollables (rock / wood). */
+  syncRerollBtn() {
+    const b = document.getElementById('act-reroll');
+    if (!b) return;
+    const u = this.selected?.userData;
+    b.hidden = !u || (u.kindKey !== 'rock' && u.kindKey !== 'wood');
+  }
+
+  /** Re-roll the selected rock/wood in place (shared by toolbar + inspector). */
+  rerollSelected() {
+    const obj = this.selected;
+    if (!obj) return;
+    const u = obj.userData;
+    if (u.kindKey !== 'rock' && u.kindKey !== 'wood') return;
+    const ns = (Math.random() * 1e9) | 0;
+    const fresh = u.kindKey === 'rock'
+      ? rerollRock(obj, ns)
+      : rerollWood(obj, ns);
+    fresh.position.copy(obj.position);
+    fresh.rotation.copy(obj.rotation);
+    fresh.scale.copy(obj.scale);
+    fresh.userData.id = u.id;
+    fresh.userData.kindKey = u.kindKey;
+    fresh.userData.autoY = u.autoY;
+    this._removeInternal(obj);
+    this.group.add(fresh);
+    this.objects.push(fresh);
+    this.settleOne(fresh, true);
+    this.select(fresh);
+    this._pushUndo('add', { id: fresh.userData.id });
+    this._changed();
+    return fresh;
   }
 
   _setupGizmoMode(mode) {
@@ -151,6 +196,13 @@ export class Placement {
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       if (this.gizmo.dragging) return;
+      // sculpt mode: LMB belongs to the brush — never pick/drag objects.
+      // capture the pointer so strokes that leave the canvas keep painting
+      if (this.sculptMode) {
+        this.select(null);
+        el.setPointerCapture(e.pointerId);
+        return;
+      }
       const ndc = this._ndc(e);
       // gizmo priority
       if (this.selected) {
@@ -201,8 +253,10 @@ export class Placement {
           o.position.x = p.x;
           o.position.z = p.z;
           if (t.onSub) {
-            // track terrain while ground-dragging; keeps manual stack offset if set
-            o.position.y = t.point.y + (o.userData.groundOffset ?? 0);
+            // heightAt (triangle-exact) rather than the ray hit: the ray may
+            // land on a different cell than the object's footprint center,
+            // which made drops visibly 'snap' onto a cell grid
+            o.position.y = this.substrate.heightAt(o.position.x, o.position.z) + (o.userData.groundOffset ?? 0);
           }
           this._dragging.moved = true;
         }
@@ -312,13 +366,23 @@ export class Placement {
     obj.updateMatrixWorld(true);
     const bb = new THREE.Box3().setFromObject(obj);
 
-    // sample substrate under bbox center
+    // sample the substrate at several footprint points (center + quarter
+    // points) and rest on the HIGHEST — long logs sit on terrain instead of
+    // teetering on a single center sample
+    const r = this.substrate.tank.floorRect;
     const c = new THREE.Vector3();
     bb.getCenter(c);
-    const r = this.substrate.tank.floorRect;
-    const cx = THREE.MathUtils.clamp(c.x, r.x0 + 1, r.x0 + r.w - 1);
-    const cz = THREE.MathUtils.clamp(c.z, r.z0 + 1, r.z0 + r.d - 1);
-    const ground = this.substrate.heightAt(cx, cz);
+    const qx = Math.min((bb.max.x - bb.min.x) / 4, 6);
+    const qz = Math.min((bb.max.z - bb.min.z) / 4, 6);
+    const sample = (x, z) => this.substrate.heightAt(
+      THREE.MathUtils.clamp(x, r.x0 + 0.5, r.x0 + r.w - 0.5),
+      THREE.MathUtils.clamp(z, r.z0 + 0.5, r.z0 + r.d - 0.5)
+    );
+    const ground = Math.max(
+      sample(c.x, c.z),
+      sample(bb.min.x + qx, c.z), sample(bb.max.x - qx, c.z),
+      sample(c.x, bb.min.z + qz), sample(c.x, bb.max.z - qz)
+    );
 
     // find the lowest point of the object
     const minY = bb.min.y;

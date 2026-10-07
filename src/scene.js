@@ -67,8 +67,11 @@ export function createScene(container) {
   const amb = new THREE.AmbientLight(0xffffff, DARK.amb);
   scene.add(amb);
 
-  // display light over the tank (aquarium-style)
-  const spot = new THREE.SpotLight(0xfff6e4, 3200, 320, Math.PI / 3.6, 0.6, 1.1);
+  // display light over the tank (aquarium-style).
+  // decay 1.1 @86 units ≈ 43 irradiance — 7× the whole rest of the rig, which
+  // blew plants/substrate to white. decay 2 (physical) keeps it comparable:
+  // 3200 / 86² ≈ 0.43 → bump candela for a soft ~2.2 contribution.
+  const spot = new THREE.SpotLight(0xfff6e4, 17000, 320, Math.PI / 3.6, 0.6, 2);
   spot.position.set(0, 96, 12);
   spot.castShadow = true;
   spot.shadow.mapSize.set(1024, 1024);

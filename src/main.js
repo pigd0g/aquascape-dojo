@@ -32,6 +32,12 @@ function setThemeUI(light) {
 btn('act-theme').addEventListener('click', () => setThemeUI(!lightMode));
 
 // ---------------- framing ----------------
+/** Lift/lower the gallery floor & walls so the stand (which hangs below y=0) never clips through. */
+function syncStage() {
+  const standH = tank.state.stand ? Math.max(28, Math.round(tank.state.h * 0.85)) + 4 : 0;
+  sceneMgr.setStageY?.(-Math.max(0, standH - 8));
+}
+
 function frameCamera() {
   const { w } = tank.state;
   const standH = tank.state.stand ? Math.max(28, Math.round(tank.state.h * 0.85)) : 0;
@@ -54,16 +60,18 @@ const setToolUI = (tool) => {
 };
 
 let tool = 'select';
+setToolUI(tool); // paint initial hint text (index.html's static copy is stale)
 
 btn('tool-select').addEventListener('click', () => {
   tool = 'select';
   setToolUI('select');
+  placement.setSculptMode(false);
   substrate.updateCursor(null, false);
 });
 btn('tool-sculpt').addEventListener('click', () => {
   tool = 'sculpt';
   setToolUI('sculpt');
-  placement.select(null);
+  placement.setSculptMode(true);
 });
 
 const setModeUI = (m) => {
@@ -77,9 +85,9 @@ btn('mode-rotate').addEventListener('click', () => setModeUI('rotate'));
 btn('mode-scale').addEventListener('click', () => setModeUI('scale'));
 setModeUI('translate');
 
-btn('act-undo').addEventListener('click', () => placement.undo());
-btn('act-redo').addEventListener('click', () => placement.redo());
-btn('act-settle').addEventListener('click', () => placement.settleAll());
+// reroll toolbar button (visible when a rock/wood is selected) — shares the
+// placement.rerollSelected() code path with the inspector's Reroll button
+btn('act-reroll').addEventListener('click', () => placement.rerollSelected());
 
 // water & snapshot
 function toggleWater() {
@@ -168,6 +176,7 @@ function loadData(data) {
   substrate._refresh();
   placement.loadAll(data.objects ?? []);
   scheduleChips();
+  syncStage();
   if (data.tank.waterOn) {
     setWaterUI(true);
     tank.setWater(true, data.tank.waterLevel);
@@ -242,9 +251,7 @@ const palette = new Palette(placement, substrate, tank, {
   setWaterUI,
   onTankResized: () => {
     scheduleChips();
-    // lift the gallery floor so tall stands never clip through it
-    const standH = tank.state.stand ? Math.max(28, Math.round(tank.state.h * 0.85)) + 4 : 0;
-    sceneMgr.setStageY?.(-Math.max(0, standH - 8));
+    syncStage();          // lift the gallery floor so tall stands never clip
     frameCamera();
   },
 });
@@ -272,6 +279,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'r') setModeUI('rotate');
   else if (k === 's') setModeUI('scale');
   else if (k === 'escape') { placement.select(null); setToolUI(tool); }
+  else if (k === 'e') { placement.rerollSelected(); }
   else if (k === 'delete' || k === 'backspace') {
     if (placement.selected) placement.deleteObj(placement.selected);
   } else if (k === 'd' && (e.ctrlKey || e.metaKey)) {
@@ -328,6 +336,7 @@ function starterLayout() {
 }
 
 // Empty tank on a stand is the requested first-load state — no starter objects.
+syncStage();
 frameCamera();
 scheduleChips();
 

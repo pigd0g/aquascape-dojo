@@ -58,7 +58,13 @@ function leafGeometryOval(len, width, seg = 5) {
   return g;
 }
 
-function makeLeafMaterial(col, rough = 0.72) {
+function makeLeafMaterial(col, rough = 0.62) {
+  // the gallery rig (key+fill+rim+spot+amb) sums to ~4.5× on lit faces —
+  // leaves must be authored dark (L~0.24-0.3) to render rich green instead
+  // of clipping to white
+  const hsl = {};
+  col.getHSL(hsl);
+  col.setHSL(hsl.h, Math.max(0.5, hsl.s), Math.min(0.3, hsl.l));
   return new THREE.MeshStandardMaterial({
     color: col, roughness: rough, metalness: 0, side: THREE.DoubleSide,
   });
@@ -77,8 +83,8 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
   const hue = def.huer[0] + rnd() * (def.huer[1] - def.huer[0]);
   const sat = def.sat[0] + rnd() * (def.sat[1] - def.sat[0]);
 
-  const mat = makeLeafMaterial(new THREE.Color().setHSL(green, sat, 0.34));
-  const mat2 = makeLeafMaterial(new THREE.Color().setHSL(clamp(green + 0.035, 0, 1), sat * 0.92, 0.42));
+  const mat = makeLeafMaterial(new THREE.Color().setHSL(green, sat, 0.27));
+  const mat2 = makeLeafMaterial(new THREE.Color().setHSL(clamp(green + 0.035, 0, 1), sat * 0.92, 0.34));
 
   const kind = def.kind ?? 'stem';
   const rndRange = (a, b) => a + rnd() * (b - a);

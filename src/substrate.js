@@ -294,7 +294,14 @@ export class Substrate {
     const H = this.heights;
     const h00 = H[j * W + i], h10 = H[j * W + i + 1];
     const h01 = H[(j + 1) * W + i], h11 = H[(j + 1) * W + i + 1];
-    return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+    // triangle-EXACT interpolation matching the mesh's quad split (a,c,b)/(b,c,e),
+    // diagonal from (i, j+1) to (i+1, j) — so raycast height == heightAt always
+    if (tx + tz <= 1) {
+      // lower-left triangle: corners (0,0) (1,0) (0,1)
+      return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
+    }
+    // upper-right triangle: corners (1,0) (1,1) (0,1)
+    return (h10 + h01 - h11) + (h11 - h01) * tx + (h11 - h10) * tz;
   }
 
   _refresh() {

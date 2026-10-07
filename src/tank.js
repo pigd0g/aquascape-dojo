@@ -40,18 +40,22 @@ export class Tank {
     const t = Math.max(0.6, Math.min(1.4, w * 0.014)); // glass thickness
 
     const glass = this.state.glass === 'clear'
-      ? { tint: 0xf2fbf7, trans: 1.0, op: 0.18 }
-      : { tint: 0x9fd8cc, trans: 0.9, op: 0.52 };
+      ? { tint: 0xf2fbf7, op: 0.07 }
+      : { tint: 0x9fd8cc, op: 0.3 };
 
+    // faint-tint transparent glass WITHOUT reflection/refraction:
+    // no transmission / ior / thickness / envmap → nothing behind it bends
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: glass.tint,
       metalness: 0,
-      roughness: 0.04,
-      transmission: glass.trans,
-      thickness: 1.0,
-      ior: 1.5,
+      roughness: 0.06,
       transparent: true,
       opacity: glass.op,
+      transmission: 0,
+      thickness: 0,
+      ior: 1.0,
+      specularIntensity: 0.08,
+      reflectivity: 0.2,
       side: THREE.DoubleSide,
       depthWrite: false,
     });

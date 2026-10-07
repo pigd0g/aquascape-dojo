@@ -92,11 +92,12 @@ export const ROCK_TYPES = {
   river: {
     name: 'River pebbles',
     brief: 'Flat smooth waterworn stones',
-    base: '#9a8f80', tints: ['#9a8f80', '#b3a893', '#7e7568', '#a89a86', '#6e665c'],
+    base: '#9a9a96', tints: ['#9a9a96', '#8d8d8f', '#a3a39f', '#7b7b7d', '#6c6c6e', '#b0aca4'],
     scaleNoise: 1.1, ridgeAmt: 0.05, strata: false, strataFreq: 0, strataAmp: 0,
     crevices: 0.08, smooth: 0.75, angular: 0.1,
-    rough: 0.38, kgPerL: 2.6,
+    rough: 0.85, kgPerL: 2.6,
     flatten: true,
+    colorFlat: true, // even matte color — no crevice blotching (reads as stone, not metal)
   },
   slate: {
     name: 'Slate & pebbles',
@@ -125,13 +126,12 @@ export const WOOD_TYPES = {
     bark: '#4a3524', barkColor: '#4a3524',
     tints: ['#4a3524', '#5d4530', '#3a291c', '#6e523a'],
   },
-  bonsai: {
-    name: 'Bonsai wood',
-    brief: 'Upright tapering trunk, pad-forming branches',
-    trunkH: [1.1, 1.6], trunkR: [0.10, 0.15], bend: 0.25,
-    branches: 6, branchLv: 2, spread: 0.85, tendril: 0.1, tendrilN: 1,
-    bark: '#69513a', barkColor: '#69513a',
-    tints: ['#69513a', '#7a6248', '#54402e', '#8a704f', '#463524'],
+  log: {
+    name: 'Driftwood log',
+    brief: 'Large gnarled trunk chunk, forks & snapped limbs',
+    trunkH: [2.6, 4.2], trunkR: [0.34, 0.55], bend: 0.5,
+    bark: '#5d412c',
+    tints: ['#54371f', '#4a3a26', '#6b4a30', '#3e2c1c', '#5d4a34', '#46311f'],
   },
 };
 

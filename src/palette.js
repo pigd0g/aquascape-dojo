@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { TANK_PRESETS, SUBSTRATES, ROCK_TYPES, WOOD_TYPES, PLANT_TYPES } from './presets.js';
 import { applyHue as applyHueShift } from './placement.js';
+import { rerollPlant } from './plants.js';
 
 const EM = { rock: '🪨', wood: '🪵', plant: '🌿', substrate: '⛰️', tank: '🛠️' };
 
@@ -505,10 +506,14 @@ export class Palette {
 
     const rr = q('#in-reroll');
     if (rr) rr.addEventListener('click', () => {
+      if (u.kindKey === 'rock' || u.kindKey === 'wood') {
+        // shared path with the top-bar reroll (rocks & wood)
+        const fresh = this.placement.rerollSelected();
+        if (this.placement.selected === fresh) this._showInspector(fresh);
+        return;
+      }
       const ns = (Math.random() * 1e9) | 0;
-      const fresh = u.kindKey === 'rock'
-        ? rerollRock(obj, ns)
-        : rerollPlant(obj, ns, obj.scale.x);
+      const fresh = rerollPlant(obj, ns, obj.scale.x);
       fresh.position.copy(obj.position);
       fresh.rotation.copy(obj.rotation);
       fresh.scale.copy(obj.scale);
@@ -569,8 +574,6 @@ export class Palette {
     num.addEventListener('input', () => commit(+num.value, 'n'));
   }
 }
-
-import { applyHue as _unused } from './placement.js'; void _unused;
 
 function tintObject(obj, hex) {
   obj.traverse((o) => {
