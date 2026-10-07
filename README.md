@@ -31,7 +31,7 @@ npm run build    # production bundle in dist/
 4. Inspector extras: **🎲 Reroll** regrows a rock/wood/plant with a fresh seed; tint swatches recolor it; **Drop** re-seats it on the substrate.
 
 ### Theme
-- **☀️ / 🌙** toggles a fully adapted light or dark studio — walls, floor, lighting and UI all switch.
+- **☀️ / 🌙** toggles a fully adapted dojo — glowing shoji by day, lantern-lit wood by evening; walls, floor, ceiling beams, lighting and UI all switch.
 
 ### Sculpting the substrate
 1. Click **⚑ Sculpt** in the top bar (or just use the Ground tab).
@@ -67,7 +67,7 @@ Live chips along the bottom report tank volume in litres, substrate litres + kg,
 ```
 index.html            shell + panel skeleton
 src/main.js           boot, wiring, save/load
-src/scene.js          renderer, lights, gallery room, camera, themes
+src/scene.js          renderer, lights, dojo room (shoji walls, coffered beam ceiling, tatami border), camera, themes
 src/tank.js           parametric glass tank, stand, water
 src/substrate.js      heightfield sculpting, splat shader, materials
 src/hardscape.js      procedural rocks
