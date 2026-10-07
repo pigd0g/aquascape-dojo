@@ -319,6 +319,7 @@ export function createWood(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
     bumpMap: tex,
     bumpScale: 0.8,
     side: THREE.DoubleSide,
+    dithering: true,
   });
 
   const mesh = new THREE.Mesh(geo, mat);

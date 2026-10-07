@@ -66,7 +66,7 @@ function makeLeafMaterial(col, rough = 0.62) {
   col.getHSL(hsl);
   col.setHSL(hsl.h, Math.max(0.5, hsl.s), Math.min(0.3, hsl.l));
   return new THREE.MeshStandardMaterial({
-    color: col, roughness: rough, metalness: 0, side: THREE.DoubleSide,
+    color: col, roughness: rough, metalness: 0, side: THREE.DoubleSide, dithering: true,
   });
 }
 

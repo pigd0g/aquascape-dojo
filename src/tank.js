@@ -58,6 +58,7 @@ export class Tank {
       reflectivity: 0.2,
       side: THREE.DoubleSide,
       depthWrite: false,
+      dithering: true,   // glass catches the spotlight cone → banding crawl
     });
     this._glassMat = glassMat;
 
@@ -77,7 +78,7 @@ export class Tank {
     add(new THREE.BoxGeometry(w + 2 * t, t, d + 2 * t), 0, -t / 2, 0);          // bottom
 
     // thin silicone seam along inside bottom edges (subtle dark line)
-    const seamMat = new THREE.MeshStandardMaterial({ color: 0x15151a, roughness: 0.55 });
+    const seamMat = new THREE.MeshStandardMaterial({ color: 0x15151a, roughness: 0.55, dithering: true });
     const seam = (len, x, y, z, rz) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, 0.5), seamMat);
       m.position.set(x, y, z);
@@ -93,11 +94,16 @@ export class Tank {
     if (this.state.stand) {
       const standH = Math.max(28, Math.round(h * 0.85));
       const sw = w + 8, sd = d + 8;
-      const standMat = new THREE.MeshStandardMaterial({ color: 0x17171b, roughness: 0.42, metalness: 0.25 });
-      const standMat2 = new THREE.MeshStandardMaterial({ color: 0x1e1e24, roughness: 0.5, metalness: 0.2 });
+      const standMat = new THREE.MeshStandardMaterial({ color: 0x17171b, roughness: 0.42, metalness: 0.25, dithering: true });
+      const standMat2 = new THREE.MeshStandardMaterial({ color: 0x1e1e24, roughness: 0.5, metalness: 0.2, dithering: true });
       const stand = new THREE.Group();
-      const cabinet = new THREE.Mesh(new THREE.BoxGeometry(sw, standH - 4, sd), standMat);
-      cabinet.position.set(0, -t - (standH - 4) / 2, 0);
+      // Cabinet top must NOT sit exactly on the plate's top plane: coincident
+      // cast/receive faces z-fight + shadow-acne into hashed stripes across
+      // the plate apron. Sink the cabinet 0.05 (0.5mm) into the plate — the
+      // larger plate still covers the seam completely.
+      const cabH = standH - 4;
+      const cabinet = new THREE.Mesh(new THREE.BoxGeometry(sw, cabH, sd), standMat);
+      cabinet.position.set(0, -t - 0.05 - cabH / 2, 0);
       cabinet.castShadow = true;
       cabinet.receiveShadow = true;
       stand.add(cabinet);
@@ -117,6 +123,7 @@ export class Tank {
       color: 0x7fb8c4, metalness: 0, roughness: 0.06,
       transmission: 0.9, thickness: 1.6, ior: 1.33,
       transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false,
+      dithering: true,
     });
     const water = new THREE.Mesh(new THREE.BoxGeometry(w - 1, 1, d - 1), this.waterMat);
     water.position.set(0, 0, 0);
@@ -131,6 +138,7 @@ export class Tank {
       color: 0x9fd4de, metalness: 0, roughness: 0.12,
       transmission: 0.75, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
       depthWrite: false,
+      dithering: true,
     });
     this._surfBase = surfGeo.attributes.position.array.slice();
     const surf = new THREE.Mesh(surfGeo, surfMat);

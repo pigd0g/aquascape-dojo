@@ -111,16 +111,24 @@ export class Substrate {
         const b1 = bottomStart + t1;
         skirtIdx.push(t0, t1, b0, t1, b1, b0);
       }
+      // The skirt (vertical cut face) gets its OWN material via geometry
+      // groups: a granular top texture minified into a tall thin strip
+      // collapses to per-column averages = vertical barcode banding that
+      // shimmers on camera motion. Group 0 = top granular, group 1 = skirt.
+      const topCount = indices.length;
       const newIdx = new Uint32Array(indices.length + skirtIdx.length);
       newIdx.set(indices, 0);
       newIdx.set(skirtIdx, indices.length);
-      // patch: uv for bottom verts (copy from top)
+      geoFinal.addGroup(0, topCount, 0);
+      geoFinal.addGroup(topCount, skirtIdx.length, 1);
+      // skirt UVs: u spans the edge as-is; v maps the strip onto the dedicated
+      // side texture (top of strip = top of face)
       const allUv = new Float32Array(totalVerts * 2);
       allUv.set(uvs);
       for (let s = 0; s < rimTopIdx.length; s++) {
         const t = rimTopIdx[s];
         allUv[(bottomStart + t) * 2] = uvs[t * 2];
-        allUv[(bottomStart + t) * 2 + 1] = uvs[t * 2 + 1];
+        allUv[(bottomStart + t) * 2 + 1] = 0.06;    // near top of side texture
       }
       geoFinal.setAttribute('position', new THREE.BufferAttribute(allPositions, 3));
       geoFinal.setAttribute('uv', new THREE.BufferAttribute(allUv, 2));
@@ -133,7 +141,11 @@ export class Substrate {
     this.mesh = new THREE.Mesh(geoFinal, null);
     this.mesh.name = 'substrateMesh';
     this.mesh.receiveShadow = true;
-    this.mesh.castShadow = true;
+    // Never cast: the mesh is fully enclosed by the glass, so its only exterior
+    // shadow is projected through the tank onto the stand top, where the
+    // heightfield's per-texel steps alias into hashed stripes under the
+    // overhead lights. Interior hardscape/plant shadows still land on it.
+    this.mesh.castShadow = false;
     this.group.add(this.mesh);
 
     // brush cursor
@@ -170,7 +182,7 @@ export class Substrate {
 
   _grainTexture(typeKey, tint) {
     const def = SUBSTRATES[typeKey];
-    const S = 512;
+    const S = 1024;
     const cv = document.createElement('canvas');
     cv.width = cv.height = S;
     const ctx = cv.getContext('2d');
@@ -182,8 +194,8 @@ export class Substrate {
     ctx.fillRect(0, 0, S, S);
 
     // broad mottling
-    for (let i = 0; i < 90; i++) {
-      const x = rnd() * S, y = rnd() * S, rad = 30 + rnd() * 130;
+    for (let i = 0; i < 130; i++) {
+      const x = rnd() * S, y = rnd() * S, rad = 40 + rnd() * 220;
       const gr = ctx.createRadialGradient(x, y, 0, x, y, rad);
       const shade = (rnd() - 0.5) * 0.22 * 255;
       gr.addColorStop(0, `rgba(${clamp(r + shade, 0, 255) | 0},${clamp(g + shade, 0, 255) | 0},${clamp(b + shade, 0, 255) | 0},0.16)`);
@@ -191,37 +203,45 @@ export class Substrate {
       ctx.fillStyle = gr;
       ctx.fillRect(x - rad, y - rad, rad * 2, rad * 2);
     }
-    // grains
-    const n = 26000 * (0.6 + def.granularity * 0.7);
+    // grains — soft alpha-blended dots keep per-grain contrast low: hard 1px
+    // speckle is what aliases into crawl-stripe noise at glancing angles
+    const n = 52000 * (0.6 + def.granularity * 0.7);
     for (let i = 0; i < n; i++) {
       const x = rnd() * S, y = rnd() * S;
-      const s = 0.6 + rnd() * (0.9 + def.grain * 0.7);
-      const v = (rnd() - 0.5) * 2 * def.contrast * 255;
-      ctx.fillStyle = `rgba(${clamp(r + v, 0, 255) | 0},${clamp(g + v, 0, 255) | 0},${clamp(b + v, 0, 255) | 0},${0.5 + rnd() * 0.5})`;
-      ctx.fillRect(x, y, s, s);
+      const s = 1.2 + rnd() * (1.6 + def.grain * 1.1);
+      const v = (rnd() - 0.5) * 2 * def.contrast * 255 * 0.55;
+      ctx.fillStyle = `rgba(${clamp(r + v, 0, 255) | 0},${clamp(g + v, 0, 255) | 0},${clamp(b + v, 0, 255) | 0},${0.25 + rnd() * 0.35})`;
+      ctx.beginPath();
+      ctx.arc(x, y, s * 0.6, 0, 6.29);
+      ctx.fill();
     }
-    // sparkle
+    // sparkle — bigger, fainter dots (single-texel sparkles are shimmer fuel)
     if (def.sparkle > 0.01) {
       for (let i = 0; i < 2400 * def.sparkle; i++) {
-        const x = rnd() * S, y = rnd() * S;
-        ctx.fillStyle = `rgba(255,252,240,${0.25 + rnd() * 0.6})`;
-        ctx.fillRect(x, y, 1, 1);
+        const x = rnd() * S, y = rnd() * S, s = 1.6 + rnd() * 1.4;
+        ctx.fillStyle = `rgba(255,252,240,${0.12 + rnd() * 0.28})`;
+        ctx.beginPath();
+        ctx.arc(x, y, s, 0, 6.29);
+        ctx.fill();
       }
     }
     const tex = new THREE.CanvasTexture(cv);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 8;
+    tex.anisotropy = 16;   // vertical faces + glancing angles need max SISO
     return tex;
   }
 
   _makeMaterial() {
     const mat = new THREE.MeshStandardMaterial({
       map: this._baseTex,
+      // bump adds grain sparkle up close, but at room-view distance a strong
+      // bump makes faces crawl/shimmer while orbiting: keep a whisper of it
       bumpMap: this._baseTex,
-      bumpScale: 1.2,
+      bumpScale: 0.35,
       roughness: SUBSTRATES[this.baseType].rough,
       metalness: 0,
+      dithering: true,   // breaks up 8-bit contour banding on smooth light gradients
     });
     const uniforms = {
       splatMap: { value: this.splatTex },
@@ -256,8 +276,10 @@ export class Substrate {
 
   _updateRepeat() {
     const { w, d } = this.tank.state;
-    const rx = Math.max(2, Math.round(w / 11));
-    const ry = Math.max(2, Math.round(d / 11));
+    // tile every ~14cm of tank — coarse tiles mean gentler minification at
+    // glancing angles (fine tiling = the crawling-speckle complaint)
+    const rx = Math.max(1, Math.round(w / 14));
+    const ry = Math.max(1, Math.round(d / 14));
     for (const t of [this._baseTex]) {
       t.repeat.set(rx, ry);
     }

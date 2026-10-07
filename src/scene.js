@@ -218,13 +218,18 @@ export function createScene(container) {
   key.position.set(-38, 70, 40);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
-  key.shadow.camera.left = -80;
-  key.shadow.camera.right = 80;
-  key.shadow.camera.top = 80;
+  // snug ortho frustum + soft blur: texels stay dense over the tank & stand,
+  // and PCF blur keeps the dojo's shadow edges gentle
+  key.shadow.camera.left = -70;
+  key.shadow.camera.right = 70;
+  key.shadow.camera.top = 70;
   key.shadow.camera.bottom = -60;
-  key.shadow.camera.far = 280;
-  key.shadow.bias = -0.0006;
-  key.shadow.normalBias = 0.03;
+  key.shadow.camera.near = 20;
+  key.shadow.camera.far = 220;
+  key.shadow.bias = -0.0002;
+  key.shadow.normalBias = 0.05;
+  key.shadow.blurSamples = 12;
+  key.shadow.radius = 4;
   scene.add(key);
 
   const fill = new THREE.DirectionalLight(0xbbd0ff, 1.1);
@@ -239,11 +244,19 @@ export function createScene(container) {
   scene.add(amb);
 
   // display light over the tank (aquarium-style)
-  const spot = new THREE.SpotLight(0xfff6e4, 3200, 320, Math.PI / 3.6, 0.6, 1.1);
+  // wide cone with near-max penumbra: tall sculpted terrain must not get a
+  // hard lit/unlit cone-edge line crawling across faces while orbiting
+  const spot = new THREE.SpotLight(0xfff6e4, 3200, 320, Math.PI / 3.1, 0.9, 1.1);
   spot.position.set(0, 96, 12);
   spot.castShadow = true;
-  spot.shadow.mapSize.set(1024, 1024);
-  spot.shadow.bias = -0.0005;
+  spot.shadow.mapSize.set(2048, 2048);
+  // tight near/far = better depth precision → no dapple on the stand top
+  spot.shadow.camera.near = 40;
+  spot.shadow.camera.far = 200;
+  spot.shadow.bias = -0.0002;
+  spot.shadow.normalBias = 0.04;
+  spot.shadow.blurSamples = 12;
+  spot.shadow.radius = 4;
   const spotTarget = new THREE.Object3D();
   spotTarget.position.set(0, 0, 0);
   scene.add(spotTarget);
@@ -262,18 +275,18 @@ export function createScene(container) {
   const plankTex = makePlankTexture(aniso);
   plankTex.repeat.set(230 / 60, 190 / 60);
 
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0 });
-  const wainscotMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 });
-  const frameMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72 });
-  const beamMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.78 });
-  const ceilMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.95, metalness: 0, dithering: true });
+  const wainscotMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, dithering: true });
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.72, dithering: true });
+  const beamMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.78, dithering: true });
+  const ceilMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, dithering: true });
   const paperMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, roughness: 0.9,
+    color: 0xffffff, roughness: 0.9, dithering: true,
     emissive: 0x000000, emissiveIntensity: 0,
   });
-  const tatamiMat = new THREE.MeshStandardMaterial({ map: tatamiTex, color: 0xffffff, roughness: 0.95 });
-  const woodFloorMat = new THREE.MeshStandardMaterial({ map: plankTex, color: 0xffffff, roughness: 0.8 });
-  const baseFloorMat = new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 1 });
+  const tatamiMat = new THREE.MeshStandardMaterial({ map: tatamiTex, color: 0xffffff, roughness: 0.95, dithering: true });
+  const woodFloorMat = new THREE.MeshStandardMaterial({ map: plankTex, color: 0xffffff, roughness: 0.8, dithering: true });
+  const baseFloorMat = new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 1, dithering: true });
 
   // ---- floor: tatami border + raised wood training area ----
   const base = new THREE.Mesh(new THREE.PlaneGeometry(2 * RX, 2 * RZ), baseFloorMat);
@@ -296,7 +309,9 @@ export function createScene(container) {
   for (const x of [RX - 27.5, -RX + 27.5])
     for (const z of [-47.5, 47.5])
       matBoxes.push({ x, y: 1.2, z, sx: 55, sy: 2.4, sz: 95 });
-  room.add(makeInstanced(matBoxes, tatamiMat, { cast: true }));
+  // tatami is floor — it receives tank shadows but never casts (its own edge
+  // shadows would stripe the wood floor at glancing light)
+  room.add(makeInstanced(matBoxes, tatamiMat));
 
   // ---- walls (inward-facing planes) ----
   const wallDefs = [
@@ -337,7 +352,7 @@ export function createScene(container) {
       });
     }
   }
-  room.add(makeInstanced(wain, wainscotMat));
+  room.add(makeInstanced(wain, wainscotMat));   // shell: receives, never casts
 
   // ---- shoji screens: back wall (5 panels) + both side walls (4 each) ----
   // Lattice: pillars between panels, top & bottom rails, then a fine kumiko
@@ -393,7 +408,10 @@ export function createScene(container) {
   addShojiWall(0, -RZ, 0, 1, 2 * RX, 5);    // back — the hero wall
   addShojiWall(-RX, 0, 1, 0, 2 * RZ, 4);    // left
   addShojiWall(RX, 0, -1, 0, 2 * RZ, 4);    // right
-  room.add(makeInstanced(frameBoxes, frameMat, { cast: true }));
+  // Shoji paper diffuses light — the room shell must NOT throw hard slat/beam
+  // shadows into the tank area (they read as crawling bands when orbiting).
+  // The shell still RECEIVES shadows from the tank and plant.
+  room.add(makeInstanced(frameBoxes, frameMat));
 
   // warm point lights just under the ceiling beams — the evening lamp glow
   // (in day mode their intensity drops to 0; the glowing shoji paper takes over)
@@ -406,19 +424,19 @@ export function createScene(container) {
 
   // ---- potted plant: black ceramic pot + broad tropical leaves ----
   const plant = new THREE.Group();
-  const potMat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.25, metalness: 0.1 });
+  const potMat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.25, metalness: 0.1, dithering: true });
   const pot = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 5, 11, 18), potMat);
   pot.position.y = 5.5;
   pot.castShadow = true;
   pot.receiveShadow = true;
   plant.add(pot);
-  const soilMat = new THREE.MeshStandardMaterial({ color: 0x2a2118, roughness: 1 });
+  const soilMat = new THREE.MeshStandardMaterial({ color: 0x2a2118, roughness: 1, dithering: true });
   const soil = new THREE.Mesh(new THREE.CylinderGeometry(6.1, 6.1, 1, 18), soilMat);
   soil.position.y = 10.8;
   plant.add(soil);
   const leafGeo = makeLeafGeo();
   const leafMat = new THREE.MeshStandardMaterial({
-    color: 0x2e5c33, roughness: 0.68, side: THREE.DoubleSide,
+    color: 0x2e5c33, roughness: 0.68, side: THREE.DoubleSide, dithering: true,
   });
   const leafRnd = mulberry32(9182);
   for (let i = 0; i < 14; i++) {
@@ -467,7 +485,7 @@ export function createScene(container) {
   beamBoxes.push({ x: 0, y: 114.5, z: RZ - 1.5, sx: 2 * RX, sy: 3, sz: 3 });
   beamBoxes.push({ x: -RX + 1.5, y: 114.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
   beamBoxes.push({ x: RX - 1.5, y: 114.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
-  room.add(makeInstanced(beamBoxes, beamMat));
+  room.add(makeInstanced(beamBoxes, beamMat));  // shell: receives, never casts
 
   const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(2 * RX, 2 * RZ), ceilMat);
   ceiling.rotation.x = Math.PI / 2;   // faces down

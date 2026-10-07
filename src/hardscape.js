@@ -138,6 +138,7 @@ export function createRock(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
     roughness: def.rough,
     metalness: 0.0,
     flatShading: false,
+    dithering: true,
   });
 
   const mesh = new THREE.Mesh(geo, mat);
