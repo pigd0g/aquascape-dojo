@@ -50,9 +50,14 @@ npm run build    # production bundle in dist/
 - Clear vs low-iron glass, display stand on/off.
 
 ### Water & output
-- **💧 Water** fills the tank to a chosen level with animated surface ripples.
-- **📷** downloads a PNG snapshot of the current view.
-- **💾 / 📂** save and reopen layouts as JSON (tank dims, substrate heights + paint mask, every object with its seed & transform).
+- **💧 Water** fills the tank to a chosen level with animated surface ripples, and the fish school appears with it.
+- **📷** downloads a PNG snapshot of the current view *and* copies the matching image-model prompt to the clipboard, so the shot can be restyled into a photorealistic aquarium.
+- **💾 Save / 📂 Open** keep named layouts in browser storage (`tank1` by default) — Open also lists them with age, size and a delete button.
+- **📥 Import / 📤 Export** (inside Open) move the same layout to and from a `.json` file — for backups or sharing between browsers.
+
+### View only
+- **V** (or **👁**) hides the whole HUD — top bar, library, inspector, hint and status chips — and expands the 3D view to fill the window, including browser fullscreen.
+- Editing is switched off while it is on (no picking, dragging, sculpting or shortcuts), so the layout can't change by accident. A faint **✕ Exit view** chip stays top-right; **V** or Esc closes it.
 
 ### Material calculator
 Live chips along the bottom report tank volume in litres, substrate litres + kg, rock litres + kg, wood litres, and plant count — updating as you work.
@@ -66,16 +71,22 @@ Live chips along the bottom report tank volume in litres, substrate litres + kg,
 ## Project structure
 ```
 index.html            shell + panel skeleton
-src/main.js           boot, wiring, save/load
+src/main.js           boot, wiring
 src/scene.js          renderer, lights, dojo room (shoji walls, coffered beam ceiling, tatami border), camera, themes
 src/tank.js           parametric glass tank, stand, water
 src/substrate.js      heightfield sculpting, splat shader, materials
 src/hardscape.js      procedural rocks
 src/wood.js           procedural driftwood
 src/plants.js         11 plant species
+src/fish.js           GLB fish school (guppy / goldfish / angelfish)
 src/placement.js      drag & drop, gizmos, settle, undo, serialization
 src/palette.js        library UI + inspector
 src/calculator.js     material chips
 src/presets.js        all catalogue data
 src/noise.js          seeded RNG + fbm/ridged noise helpers
+src/storage.js        localStorage layout store
+src/layout-ui.js      Save / Open popovers, file Export / Import
+src/photo-prompt.js   prompt copied with each snapshot
+src/ui.js             clipboard + button helpers
+public/models/        fish GLBs
 ```

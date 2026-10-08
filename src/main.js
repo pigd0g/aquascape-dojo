@@ -7,6 +7,9 @@ import { Substrate } from './substrate.js';
 import { Placement } from './placement.js';
 import { Palette } from './palette.js';
 import { FishSchool } from './fish.js';
+import { LayoutUI } from './layout-ui.js';
+import { PHOTO_PROMPT } from './photo-prompt.js';
+import { copyText, flashButton } from './ui.js';
 import { updateChips } from './calculator.js';
 
 const container = document.getElementById('viewport');
@@ -116,31 +119,17 @@ btn('act-shot').addEventListener('click', () => {
   a.href = url;
   a.download = `aquascape-dojo-${Date.now()}.png`;
   a.click();
+  // hand the matching image-model prompt over with the shot, so the download
+  // and the prompt can be pasted straight into a generator side by side
+  copyText(PHOTO_PROMPT).then((ok) =>
+    flashButton(
+      btn('act-shot'),
+      ok ? '📋 + prompt' : '📷 saved',
+    ),
+  );
 });
 
-// save / load
-btn('act-save').addEventListener('click', () => {
-  const data = saveData();
-  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `aquascape-dojo-${Date.now()}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-});
-btn('act-load').addEventListener('click', () => btn('file-load').click());
-btn('file-load').addEventListener('change', async (e) => {
-  const f = e.target.files[0];
-  if (!f) return;
-  try {
-    const json = JSON.parse(await f.text());
-    loadData(json);
-  } catch (err) {
-    alert('Could not read layout: ' + err.message);
-  }
-  e.target.value = '';
-});
-
+// save / load — browser storage via LayoutUI, files via Export / Import
 function saveData() {
   return {
     version: 1,
@@ -187,6 +176,26 @@ function loadData(data) {
   if (data.tank.waterOn) tank.setWater(true, data.tank.waterLevel);
 }
 
+// ---------------- layout persistence UI ----------------
+const layoutUI = new LayoutUI({ getData: saveData, applyData: loadData });
+window.__layoutUI = layoutUI; // debug/testing handle
+
+// Ctrl+S / Ctrl+O open the browser-storage popovers (the browser's native
+// save dialog is never what we want here). Keys only fire on bare presses so
+// Ctrl+Shift+S etc. still reach the browser.
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+  if (viewOnly) return; // the HUD is hidden: don't open popovers behind it
+  const k = e.key.toLowerCase();
+  if (k === 's') {
+    e.preventDefault();
+    layoutUI.saveBtn.click();
+  } else if (k === 'o') {
+    e.preventDefault();
+    layoutUI.openBtn.click();
+  }
+});
+
 // ---------------- sculpt & hover interaction ----------------
 let sculpting = false;
 let lastSculpt = 0;
@@ -198,7 +207,50 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => { shiftDown.value = e.shiftKey; });
 
+// ---------------- view-only mode ----------------
+// "V" hides every panel, overlay and gizmo and leaves a clean, full-bleed view
+// of the tank — for screenshots, or just looking at the scape. Editing is
+// switched off at the source, not merely hidden, so no keyboard shortcut or
+// stray click can change the layout while it is on.
+let viewOnly = false;
+const viewOnlyTargets = [
+  document.getElementById('topbar'),
+  document.getElementById('hint'),
+  document.getElementById('statusbar'),
+  document.getElementById('panel'),
+];
+const viewOnlyExit = document.getElementById('view-exit');
+
+function setViewOnly(on) {
+  if (viewOnly === on) return;
+  viewOnly = on;
+  document.body.classList.toggle('view-only', on);
+  for (const el of viewOnlyTargets) el.classList.toggle('hidden', on);
+
+  // the scene itself: no picking, no gizmo, no brush cursor
+  placement.setViewOnly(on);
+  if (on) {
+    sculpting = false;
+    substrate.updateCursor(null, false);
+  }
+
+  // a popover left open would float over the clean view
+  layoutUI.closeSave();
+  layoutUI.closeOpen();
+
+  // leaving view-only restores the tool that was active before
+  if (!on) {
+    setToolUI(tool);
+    placement.syncRerollBtn();
+  }
+  viewOnlyExit.classList.toggle('hidden', !on);
+  window.dispatchEvent(new CustomEvent('dojo:viewonly', { detail: on }));
+}
+viewOnlyExit.addEventListener('click', () => setViewOnly(false));
+btn('act-view').addEventListener('click', () => setViewOnly(!viewOnly));
+
 placement.onHover = (ndc, e) => {
+  if (viewOnly) return;
   if (tool !== 'sculpt' || placement._dragging) return;
   const t = placement._tankRay(ndc);
   if (t) {
@@ -226,7 +278,7 @@ placement.onHover = (ndc, e) => {
 };
 
 window.addEventListener('pointerdown', (e) => {
-  if (tool === 'sculpt' && e.button === 0 && e.target === renderer.domElement) sculpting = true;
+  if (!viewOnly && tool === 'sculpt' && e.button === 0 && e.target === renderer.domElement) sculpting = true;
 });
 window.addEventListener('pointerup', () => {
   if (sculpting) {
@@ -282,6 +334,39 @@ setTimeout(updateChipsNow, 400);
 // selection tooling keyboard
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  // V toggles view-only from anywhere, including while view-only is on
+  if (e.key === 'v' || e.key === 'V') {
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      setViewOnly(!viewOnly);
+      return;
+    }
+  }
+  // Esc leaves view-only (its usual "deselect" job is moot there)
+  if (e.key === 'Escape' && viewOnly) {
+    e.preventDefault();
+    setViewOnly(false);
+    return;
+  }
+  // Ctrl/Cmd combos belong to the layout shortcuts (Ctrl+S / Ctrl+O) and the
+  // edit shortcuts below — never to the bare G/R/S mode switches.
+  if (e.ctrlKey || e.metaKey) {
+    if (viewOnly) return; // no saving/undoing from inside a clean view
+    const k = e.key.toLowerCase();
+    if (k === 'd') {
+      e.preventDefault();
+      if (placement.selected) placement.duplicate(placement.selected);
+    } else if (k === 'z') {
+      e.preventDefault();
+      e.shiftKey ? placement.redo() : placement.undo();
+    } else if (k === 'y') {
+      e.preventDefault();
+      placement.redo();
+    }
+    return;
+  }
+  // every remaining shortcut edits the layout — inert while view-only
+  if (viewOnly) return;
   const k = e.key.toLowerCase();
   if (k === 'g') setModeUI('translate');
   else if (k === 'r') setModeUI('rotate');
@@ -290,15 +375,6 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'e') { placement.rerollSelected(); }
   else if (k === 'delete' || k === 'backspace') {
     if (placement.selected) placement.deleteObj(placement.selected);
-  } else if (k === 'd' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    if (placement.selected) placement.duplicate(placement.selected);
-  } else if (k === 'z' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    e.shiftKey ? placement.redo() : placement.undo();
-  } else if (k === 'y' && (e.ctrlKey || e.metaKey)) {
-    e.preventDefault();
-    placement.redo();
   }
 });
 

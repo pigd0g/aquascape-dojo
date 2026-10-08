@@ -73,6 +73,8 @@ export class Palette {
     let dragCard = null;
     document.querySelectorAll('.card').forEach((card) => {
       card.addEventListener('pointerdown', (e) => {
+        // view-only: the whole panel is hidden, but guard the drag anyway
+        if (this.placement.viewOnly) return;
         dragCard = card;
         card.classList.add('dragging');
         ghost.textContent = card.querySelector('.nm').textContent + ' — drop on tank';

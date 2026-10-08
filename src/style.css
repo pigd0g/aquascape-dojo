@@ -66,6 +66,49 @@ html, body {
   position: absolute; left: 10px; right: 10px; bottom: 10px;
   display: flex; gap: 8px; align-items: center; z-index: 5; pointer-events: none;
 }
+
+/* ============ save / open popovers ============ */
+.pop {
+  position: absolute; top: 52px; right: 10px; z-index: 7;
+  width: 300px; padding: 4px 14px 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.75);
+  animation: pop-in 0.12s ease-out;
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.pop .heading { margin: 12px 0 8px; }
+.pop .heading:first-child { margin-top: 10px; }
+.pop .row2 { margin-top: 10px; }
+.pop-msg {
+  font: 500 10.5px/1.4 var(--mono); color: var(--ink-dim);
+  margin: 7px 1px 0; min-height: 14px;
+}
+.pop-msg.warn { color: var(--danger); }
+.pop .note { margin-top: 0; }
+
+#open-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.pop-empty { font: 500 10.5px/1.5 var(--mono); color: var(--ink-dim); margin: 2px 1px 4px; }
+.save-item { display: flex; gap: 4px; align-items: stretch; }
+.save-open {
+  flex: 1; appearance: none; cursor: pointer; text-align: left;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--panel2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.save-open:hover { border-color: rgba(217, 179, 106, 0.5); background: #201f27; }
+.save-open .nm { font: 700 12px/1.2 var(--mono); letter-spacing: 0.01em; }
+.save-open .dt { font: 500 9.5px/1 var(--mono); color: var(--ink-dim); }
+.save-del {
+  appearance: none; cursor: pointer; width: 28px; flex: 0 0 28px;
+  background: var(--panel2); color: var(--ink-dim);
+  border: 1px solid var(--line); border-radius: 8px; font-size: 11px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.save-del:hover { color: var(--danger); border-color: rgba(224, 101, 87, 0.5); }
 #chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
   font: 600 11px/1 var(--mono); letter-spacing: 0.02em;
@@ -245,6 +288,33 @@ body.light {
 ::-webkit-scrollbar { width: 9px; }
 ::-webkit-scrollbar-thumb { background: #2c2c35; border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============ view-only mode ============ */
+/* Everything with the HUD is hidden via .hidden from main.js; the cursor also
+   drops back to a plain arrow so the canvas doesn't read as "drag me". */
+body.view-only #viewport canvas.gl { cursor: default; }
+body.view-only #hint { display: none; }
+/* #panel is hidden, but its flex-basis would still reserve the 338px column:
+   let the viewport swallow the whole window so the view is truly full-bleed. */
+body.view-only #viewport { flex: 1 1 100%; }
+body.view-only #panel { flex: 0 0 0; }
+
+#view-exit {
+  position: absolute; top: 12px; right: 12px; z-index: 8;
+  appearance: none; cursor: pointer;
+  font: 600 11px/1 var(--mono); letter-spacing: 0.04em;
+  color: var(--ink); background: color-mix(in srgb, var(--panel) 72%, transparent);
+  border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px;
+  backdrop-filter: blur(8px);
+  opacity: 0; transition: opacity 0.25s ease, background 0.15s, color 0.15s;
+}
+#view-exit.hidden { display: none !important; }
+body.view-only #view-exit { opacity: 0.35; }
+body.view-only #view-exit:hover,
+body.view-only #view-exit:focus-visible {
+  opacity: 1; background: var(--panel); color: var(--accent);
+  border-color: rgba(217, 179, 106, 0.45);
+}
 
 /* ============ boot / loading screen ============ */
 #boot {

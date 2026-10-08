@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Aquascape Dojo">
+  <!-- Dark rounded tile so the fish reads on light browser chrome too -->
+  <rect width="32" height="32" rx="7" fill="#141419"/>
+
+  <!-- Forked caudal fin -->
+  <path d="M9.4 16 L1.6 7.6 L4.4 16 L1.6 24.4 Z" fill="#d9b36a"/>
+
+  <!-- Body: rounded back, tapering to a pointed snout on the right -->
+  <path
+    d="M30.4 16 C30.4 16 25.6 8.2 18 8.2 C11.6 8.2 8.6 12.4 8.6 16
+       C8.6 19.6 11.6 23.8 18 23.8 C25.6 23.8 30.4 16 30.4 16 Z"
+    fill="#d9b36a"/>
+
+  <!-- Neon flank stripe -->
+  <path
+    d="M10.2 14.6 C15.4 12.9 21.6 13 28.6 15.3"
+    stroke="#46dcf0" stroke-width="1.7" stroke-linecap="round" fill="none"/>
+
+  <!-- Eye -->
+  <circle cx="25.4" cy="13.9" r="1.9" fill="#141419"/>
+</svg>

@@ -23,6 +23,7 @@ export class Placement {
     this.onChange = null; // set by main
     this.onSelection = null;
     this.sculptMode = false; // true = LMB belongs to the sculpt brush, not picking
+    this.viewOnly = false; // true = camera-only mode; picking/dragging is dead
 
     this.group = new THREE.Group();
     this.group.name = 'placed';
@@ -65,8 +66,29 @@ export class Placement {
     }
   }
 
+  /**
+   * View-only mode: the scene becomes a camera-only viewer. Picking, dragging
+   * and the transform gizmo are all disabled (and any live drag/spawn is
+   * abandoned), so nothing can modify the layout while it is on.
+   */
+  setViewOnly(on) {
+    this.viewOnly = !!on;
+    if (on) {
+      this._dragging = null;
+      this._abortSpawn();
+      this._overTank = false;
+      this.select(null);
+    }
+  }
+
+  /** True when an edit is currently allowed (never in view-only mode). */
+  get canEdit() {
+    return !this.viewOnly;
+  }
+
   // ================= spawning =================
   spawn(kindKey, typeKey) {
+    if (!this.canEdit) return null;
     const id = ++Placement._nextId;
     const rnd = (Math.random() * 1e9) | 0;
     let obj;
@@ -110,6 +132,7 @@ export class Placement {
 
   // ================= selection =================
   select(obj) {
+    if (this.viewOnly) obj = null; // never show a gizmo in view-only mode
     if (this.selected === obj) return;
     this.selected = obj || null;
     if (obj) {
@@ -133,6 +156,7 @@ export class Placement {
 
   /** Re-roll the selected rock/wood in place (shared by toolbar + inspector). */
   rerollSelected() {
+    if (!this.canEdit) return null;
     const obj = this.selected;
     if (!obj) return;
     const u = obj.userData;
@@ -210,6 +234,9 @@ export class Placement {
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       if (this.gizmo.dragging) return;
+      // view-only mode: left button does nothing but orbit (handled by the
+      // controls), so the camera is the only thing a click can touch
+      if (this.viewOnly) return;
       // sculpt mode: LMB belongs to the brush — never pick/drag objects.
       // capture the pointer so strokes that leave the canvas keep painting
       if (this.sculptMode) {
@@ -318,6 +345,7 @@ export class Placement {
 
   // ================= spawn drag flow =================
   beginSpawn(kindKey, typeKey) {
+    if (!this.canEdit) return null;
     this._abortSpawn();
     const id = ++Placement._nextId;
     const rnd = (Math.random() * 1e9) | 0;
@@ -447,6 +475,7 @@ export class Placement {
 
   // ================= delete / duplicate =================
   deleteObj(obj) {
+    if (!this.canEdit) return;
     const i = this.objects.indexOf(obj);
     if (i >= 0) this.objects.splice(i, 1);
     if (this.selected === obj) this.select(null);
@@ -457,6 +486,7 @@ export class Placement {
   }
 
   duplicate(obj) {
+    if (!this.canEdit || !obj) return null;
     const u = obj.userData;
     const copy = spawnFromData(serializeSingle(obj));
     if (!copy) return null;
@@ -480,6 +510,7 @@ export class Placement {
   }
 
   undo() {
+    if (!this.canEdit) return;
     const act = this.undoStack.pop();
     if (!act) return;
     const redo = this._applyUndo(act, true);
@@ -489,6 +520,7 @@ export class Placement {
   }
 
   redo() {
+    if (!this.canEdit) return;
     const act = this.redoStack.pop();
     if (!act) return;
     const back = this._applyUndo(act, false);

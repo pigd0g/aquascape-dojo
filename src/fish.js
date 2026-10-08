@@ -229,11 +229,27 @@ export class FishSchool {
   _seedPosition(f, spreadY = false) {
     const rnd = this.rnd;
     const b = this.bounds;
-    f.model.position.set(
-      b.x0 + rnd() * (b.x1 - b.x0),
-      spreadY ? b.y0 + rnd() * (b.y1 - b.y0) : (b.y0 + b.y1) * 0.5,
-      b.z0 + rnd() * (b.z1 - b.z0),
-    );
+    // Prefer open water: a fish seeded inside hardscape is ejected on its first
+    // tick, which reads as the shoal popping when a save is loaded.
+    let x = b.x0;
+    let z = b.z0;
+    let y = spreadY ? b.y0 : (b.y0 + b.y1) * 0.5;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      x = b.x0 + rnd() * (b.x1 - b.x0);
+      z = b.z0 + rnd() * (b.z1 - b.z0);
+      y = spreadY ? b.y0 + rnd() * (b.y1 - b.y0) : (b.y0 + b.y1) * 0.5;
+      // clear of every footprint we would be swimming into at this height
+      const blocked = this._obstacles.some(
+        (o) =>
+          x > o.x0 &&
+          x < o.x1 &&
+          z > o.z0 &&
+          z < o.z1 &&
+          y < o.top + 0.5 + f.lift,
+      );
+      if (!blocked) break;
+    }
+    f.model.position.set(x, y, z);
     f.targetY = b.y0 + rnd() * (b.y1 - b.y0);
     f.angle = rnd() * Math.PI * 2;
     f.targetAngle = f.angle;
@@ -439,26 +455,34 @@ export class FishSchool {
         if (f.kind === 'guppy') f.vY = Math.max(f.vY, 0);
         continue;
       }
-      // no headroom: leave through the nearest face, facing that way
-      const dl = pos.x - o.x0,
-        dr = o.x1 - pos.x;
-      const db = pos.z - o.z0,
-        df = o.z1 - pos.z;
-      const depth = Math.min(dl, dr, db, df);
-      if (depth === dl) {
-        pos.x = o.x0 - 0.3;
-        f.angle = Math.PI;
-      } else if (depth === dr) {
-        pos.x = o.x1 + 0.3;
-        f.angle = 0;
-      } else if (depth === db) {
-        pos.z = o.z0 - 0.3;
-        f.angle = Math.PI / 2;
+
+      // No headroom: leave through a side face. The obstacle's bounding box can
+      // poke through the glass (wood/rock dragged against a pane), so the exit
+      // must land INSIDE the swim volume — the naive nearest-face push put fish
+      // on the far side of the glass, which is very visible on load, when the
+      // whole shoal is re-seeded into those footprints at once.
+      const exits = [
+        { d: pos.x - o.x0, axis: 'x', to: o.x0 - 0.3, yaw: Math.PI },
+        { d: o.x1 - pos.x, axis: 'x', to: o.x1 + 0.3, yaw: 0 },
+        { d: pos.z - o.z0, axis: 'z', to: o.z0 - 0.3, yaw: Math.PI / 2 },
+        { d: o.z1 - pos.z, axis: 'z', to: o.z1 + 0.3, yaw: -Math.PI / 2 },
+      ]
+        .filter((e) =>
+          e.axis === 'x' ? e.to >= b.x0 && e.to <= b.x1 : e.to >= b.z0 && e.to <= b.z1,
+        )
+        .sort((a, c) => a.d - c.d);
+      const exit = exits[0];
+      if (exit) {
+        if (exit.axis === 'x') pos.x = exit.to;
+        else pos.z = exit.to;
+        f.angle = exit.yaw;
+        f.targetAngle = f.angle;
       } else {
-        pos.z = o.z1 + 0.3;
-        f.angle = -Math.PI / 2;
+        // the obstacle spans the whole cross-section: there is nowhere to go
+        // but over the top, so ride the ceiling until past it
+        pos.y = b.y1;
+        if (f.kind === 'guppy') f.vY = Math.max(f.vY, 0);
       }
-      f.targetAngle = f.angle;
     }
 
     // never swim into the substrate (sculpted mounds can be tall)
@@ -469,6 +493,14 @@ export class FishSchool {
         if (f.kind === 'guppy' && f.vY < 0) f.vY = 0;
       }
     }
+
+    // Final clamp. The obstacle and substrate passes above can move a fish
+    // anywhere, so the pane bounce at the top of this method is not enough:
+    // re-seat inside the glass no matter which branch ran last. Fish outside
+    // the tank (in the room) are the one bug this method must never allow.
+    pos.x = clamp(pos.x, b.x0, b.x1);
+    pos.z = clamp(pos.z, b.z0, b.z1);
+    pos.y = clamp(pos.y, b.y0, b.y1);
   }
 
   dispose() {

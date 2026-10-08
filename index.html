@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <title>Aquascape Dojo · 造景道場</title>
   <!-- critical boot styles: applied before the module CSS loads, so the
        loading screen never flashes as unstyled content -->
@@ -45,10 +46,38 @@
         <div class="tgroup">
           <button id="act-theme" class="tbtn" title="Toggle light / dark">☀️</button>
           <button id="act-water" class="tbtn" title="Fill the tank with water">💧 Water</button>
-          <button id="act-shot" class="tbtn" title="Download PNG snapshot">📷</button>
-          <button id="act-save" class="tbtn" title="Save layout (.json)">💾</button>
-          <button id="act-load" class="tbtn" title="Open layout (.json)">📂</button>
+          <button id="act-shot" class="tbtn" title="Download a PNG and copy the photo prompt">📷</button>
+          <button id="act-save" class="tbtn" title="Save this layout in the browser (Ctrl+S)">💾 Save</button>
+          <button id="act-open" class="tbtn" title="Open a saved layout (Ctrl+O)">📂 Open</button>
+          <button id="act-view" class="tbtn" title="View only — hide all panels (V)">👁</button>
           <input type="file" id="file-load" accept=".json,application/json" hidden />
+        </div>
+      </div>
+
+      <!-- View only: the sole control that stays on screen while the HUD is hidden -->
+      <button id="view-exit" class="hidden" title="Exit view only (V)">✕ Exit view · V</button>
+
+      <!-- Save: name the layout and write it to browser storage -->
+      <div id="save-pop" class="pop hidden">
+        <div class="heading">Save layout</div>
+        <input type="text" id="save-name" maxlength="40" spellcheck="false"
+               placeholder="tank1" autocomplete="off" />
+        <p class="pop-msg" id="save-msg"></p>
+        <div class="row2">
+          <button class="btn" id="save-cancel">Cancel</button>
+          <button class="btn gold" id="save-confirm">Save</button>
+        </div>
+      </div>
+
+      <!-- Open: saved layouts, plus the file-based Export / Import pair -->
+      <div id="open-pop" class="pop hidden">
+        <div class="heading">Saved layouts</div>
+        <div id="open-list"></div>
+        <div class="heading">Files</div>
+        <p class="note" style="margin-top:0">Move a layout between browsers, or keep a backup.</p>
+        <div class="row2">
+          <button class="btn" id="act-import">📥 Import</button>
+          <button class="btn" id="act-export">📤 Export</button>
         </div>
       </div>
       <div id="hint">Drag items from the library onto the tank · click to select · G / R / S = move, rotate, scale</div>

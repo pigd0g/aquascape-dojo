@@ -729,14 +729,26 @@ export function createScene(container) {
   }
   setTheme(false);
 
+  /**
+   * Fit the renderer to its container. A ResizeObserver watches the container
+   * itself rather than the window, so every layout change is caught — including
+   * the ones that never fire a window event: the right panel collapsing in
+   * view-only mode, browser fullscreen, or the devtools panel opening.
+   */
   function resize() {
     const w = container.clientWidth,
       h = container.clientHeight;
     if (!w || !h) return;
+    // DPR can change without a container resize (dragging to another monitor)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
   }
+  const ro = new ResizeObserver(resize);
+  ro.observe(container);
+  // keep the window listener too: it also fires for DPR-only changes, which
+  // ResizeObserver never reports
   window.addEventListener("resize", resize);
 
   return {
