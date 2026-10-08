@@ -245,3 +245,93 @@ body.light {
 ::-webkit-scrollbar { width: 9px; }
 ::-webkit-scrollbar-thumb { background: #2c2c35; border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============ boot / loading screen ============ */
+#boot {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #17171f 0%, var(--bg) 60%);
+  /* fades out; visibility+pointer-events drop it from the page once done */
+  opacity: 1; visibility: visible;
+  transition: opacity 0.45s ease, visibility 0s linear 0.45s;
+}
+#boot.done { opacity: 0; visibility: hidden; pointer-events: none; }
+
+.boot-inner { display: flex; flex-direction: column; align-items: center; text-align: center; }
+#boot .kanji { color: var(--accent); font-weight: 600; letter-spacing: 0.3em; font-size: 12px; }
+
+/* ---- little glass box that fills with water ---- */
+.boot-tank {
+  position: relative; width: 92px; height: 108px;
+  border: 2px solid rgba(232, 230, 227, 0.32);
+  border-top: none; border-radius: 3px 3px 6px 6px;
+  margin-bottom: 22px;
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.02), 0 18px 40px -22px #000;
+}
+.boot-tank::before,
+.boot-tank::after { /* glass side highlights */
+  content: ""; position: absolute; top: 0; bottom: 0; width: 1px;
+  background: linear-gradient(transparent, rgba(255, 255, 255, 0.35));
+}
+.boot-tank::before { left: 7px; }
+.boot-tank::after { right: 7px; }
+
+.boot-water {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 100%;
+  background:
+    linear-gradient(180deg, rgba(159, 216, 204, 0.5), rgba(127, 184, 196, 0.75));
+  transform-origin: bottom;
+  animation: boot-fill 1.6s cubic-bezier(0.4, 0.1, 0.2, 1) forwards,
+             boot-sway 3.2s ease-in-out 1.6s infinite;
+}
+.boot-water::before { /* waterline highlights */
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 6px;
+  background: linear-gradient(rgba(255, 255, 255, 0.55), transparent);
+}
+@keyframes boot-fill { from { transform: scaleY(0.04); } to { transform: scaleY(0.86); } }
+@keyframes boot-sway { 0%, 100% { transform: scaleY(0.86); } 50% { transform: scaleY(0.84); } }
+
+/* ---- title ---- */
+.boot-brand {
+  font: 800 20px/1 "Inter", system-ui, sans-serif; letter-spacing: 0.12em;
+  display: flex; align-items: baseline; gap: 10px; color: var(--ink);
+}
+.boot-tag {
+  margin: 6px 0 0; font: 500 10.5px/1.2 var(--mono); color: var(--ink-dim);
+  letter-spacing: 0.05em;
+}
+
+/* ---- indeterminate progress ---- */
+.boot-bar {
+  position: relative; overflow: hidden; margin-top: 20px;
+  width: 190px; height: 3px; border-radius: 2px; background: #23232b;
+}
+.boot-bar i {
+  position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent) 45%, var(--accent));
+  animation: boot-slide 1.15s ease-in-out infinite;
+}
+@keyframes boot-slide {
+  0% { transform: translateX(-100%); } 100% { transform: translateX(350%); }
+}
+.boot-status {
+  margin: 12px 0 0; font: 600 10.5px/1 var(--mono); letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-dim);
+}
+.boot-status::after {
+  content: "…"; animation: boot-dots 1.4s steps(1, end) infinite;
+}
+@keyframes boot-dots {
+  0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "…"; }
+}
+
+/* ---- light theme (loader can only show pre-theme, but keep parity) ---- */
+body.light #boot { background: radial-gradient(120% 90% at 50% 0%, #f6f4ee 0%, var(--bg) 60%); }
+body.light .boot-bar { background: #dcd9cf; }
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-water { animation: none; transform: scaleY(0.86); }
+  .boot-bar i { animation: none; width: 100%; opacity: 0.55; }
+  .boot-status::after { animation: none; }
+}

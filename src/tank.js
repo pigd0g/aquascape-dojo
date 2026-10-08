@@ -172,15 +172,22 @@ export class Tank {
     }
 
     // water body + surface
+    // NO transmission here: the body is a Y-scaled box, and three.js's
+    // thickness-based refraction multiplies `thickness` by the model scale
+    // (getVolumeTransmissionRay). The scaled-up thickness offsets the
+    // framebuffer sample by tens of cm, so submerged hardscape/plants get
+    // duplicated as a ghost image floating above the waterline — read by
+    // everyone as "reflections of the objects". Plain transparency tints the
+    // contents without re-sampling them, which is what a real tank looks like.
     this.waterMat = new THREE.MeshPhysicalMaterial({
       color: 0x7fb8c4,
       metalness: 0,
       roughness: 0.06,
-      transmission: 0.9,
-      thickness: 1.6,
-      ior: 1.33,
+      transmission: 0,
+      thickness: 0,
+      ior: 1.0,
       transparent: true,
-      opacity: 0.3,
+      opacity: 0.22,
       side: THREE.DoubleSide,
       depthWrite: false,
       dithering: true,
@@ -197,13 +204,18 @@ export class Tank {
     g.add(water);
 
     const surfGeo = new THREE.PlaneGeometry(w - 1, d - 1, 48, 24);
+    // surface plane is a flat sheet (no scale), but keep it transmission-free
+    // too: any specular/refraction pass on the very top of the tank reads as a
+    // mirror to the user, and the ripple animation already sells the water.
     const surfMat = new THREE.MeshPhysicalMaterial({
       color: 0x9fd4de,
       metalness: 0,
       roughness: 0.12,
-      transmission: 0.75,
+      transmission: 0,
+      thickness: 0,
+      ior: 1.0,
       transparent: true,
-      opacity: 0.5,
+      opacity: 0.42,
       side: THREE.DoubleSide,
       depthWrite: false,
       dithering: true,

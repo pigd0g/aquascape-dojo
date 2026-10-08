@@ -6,6 +6,7 @@ import { Tank, STAND_H } from './tank.js';
 import { Substrate } from './substrate.js';
 import { Placement } from './placement.js';
 import { Palette } from './palette.js';
+import { FishSchool } from './fish.js';
 import { updateChips } from './calculator.js';
 
 const container = document.getElementById('viewport');
@@ -17,7 +18,8 @@ const tank = new Tank(scene);
 const substrate = new Substrate(scene, tank);
 const placement = new Placement(scene, camera, renderer, substrate);
 placement.setOrbit(controls);
-window.__dojo = { tank, substrate, placement, sceneMgr }; // debug/testing handle
+const fish = new FishSchool(scene, tank, substrate, placement);
+window.__dojo = { tank, substrate, placement, fish, sceneMgr }; // debug/testing handle
 
 // ---------------- theme ----------------
 let lightMode = false;
@@ -104,6 +106,7 @@ function toggleWater() {
 function setWaterUI(on) {
   btn('act-water').classList.toggle('active', on);
   tank.setWater(on);
+  fish.setEnabled(on);
 }
 btn('act-water').addEventListener('click', toggleWater);
 btn('act-shot').addEventListener('click', () => {
@@ -177,10 +180,11 @@ function loadData(data) {
   placement.loadAll(data.objects ?? []);
   scheduleChips();
   syncStage();
-  if (data.tank.waterOn) {
-    setWaterUI(true);
-    tank.setWater(true, data.tank.waterLevel);
-  }
+  // tank.rebuild() recreated the water meshes hidden: apply the saved fill
+  // state either way, so a dry save really drains and the fish leave with it.
+  // setWaterUI() also enables/disables the school.
+  setWaterUI(!!data.tank.waterOn);
+  if (data.tank.waterOn) tank.setWater(true, data.tank.waterLevel);
 }
 
 // ---------------- sculpt & hover interaction ----------------
@@ -253,6 +257,10 @@ const palette = new Palette(placement, substrate, tank, {
     scheduleChips();
     syncStage();          // lift the gallery floor so tall stands never clip
     frameCamera();
+    // tank.rebuild() recreates the water meshes hidden — restore the fill
+    if (tank.state.waterOn) tank.setWater(true, tank.state.waterLevel);
+    fish.setEnabled(tank.state.waterOn); // and match the fish to the fill
+    fish.syncBounds();    // swim volume follows the new tank dims
   },
 });
 window.__palette = palette;
@@ -342,11 +350,24 @@ scheduleChips();
 
 // ---------------- render loop ----------------
 const clock = new THREE.Clock();
+let frames = 0;
 function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(clock.getDelta(), 0.05);
   controls.update();
   tank.tick(dt);
+  fish.tick(dt);
   renderer.render(scene, camera);
+
+  // Hide the CSS boot screen once the scene is really on screen (2 painted
+  // frames covers first-frame shader compilation). The min display time keeps
+  // the intro from flashing on fast loads.
+  if (++frames === 2) {
+    const boot = document.getElementById('boot');
+    if (boot) {
+      const held = performance.now(); // ms since page start (timeOrigin)
+      setTimeout(() => boot.classList.add('done'), Math.max(0, 700 - held));
+    }
+  }
 }
 loop();

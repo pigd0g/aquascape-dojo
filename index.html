@@ -4,8 +4,28 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Aquascape Dojo · 造景道場</title>
+  <!-- critical boot styles: applied before the module CSS loads, so the
+       loading screen never flashes as unstyled content -->
+  <style>
+    #boot {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(120% 90% at 50% 0%, #17171f 0%, #0c0c10 60%);
+      color: #e8e6e3; font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+  </style>
 </head>
 <body>
+  <!-- CSS-only boot screen — main.js fades it out once the first frames are painted -->
+  <div id="boot" role="status" aria-live="polite">
+    <div class="boot-inner">
+      <div class="boot-tank" aria-hidden="true"><div class="boot-water"></div></div>
+      <div class="boot-brand">DOJO <span class="kanji">造景道場</span></div>
+      <p class="boot-tag">virtual aquascape layout studio</p>
+      <div class="boot-bar" aria-hidden="true"><i></i></div>
+      <p class="boot-status">Filling the tank</p>
+    </div>
+  </div>
   <div id="app">
     <div id="viewport">
       <div id="topbar">
