@@ -22,13 +22,13 @@ npm run build    # production bundle in dist/
 1. Pick a tab (🪨 Rocks, 🪵 Wood, 🌿 Plants).
 2. **Drag a card** onto the tank — a ghost preview follows the cursor; release to drop.
 3. Click any object to select it: move/rotate/scale with the gizmo (G / R / S switch modes), or use the inspector sliders.
-4. Inspector extras: **🎲 Reroll** regrows a rock/wood/plant with a fresh seed; tint swatches recolor it; **Drop** re-seats it on the substrate.
+4. Inspector extras: **🎲 Reroll** regrows a rock/wood/plant with a fresh seed; **↺ Type defaults** restores a rock's preset values; tint swatches recolor it; **Drop** re-seats it on the substrate.
 
 ### Placing hardscape & plants
 1. Pick a tab (🪨 Rocks, 🪵 Wood, 🌿 Plants).
 2. **Drag a card** onto the tank — a ghost preview follows the cursor; release to drop.
 3. Click any object to select it: move/rotate/scale with the gizmo (G / R / S switch modes), or use the inspector sliders.
-4. Inspector extras: **🎲 Reroll** regrows a rock/wood/plant with a fresh seed; tint swatches recolor it; **Drop** re-seats it on the substrate.
+4. Inspector extras: **🎲 Reroll** regrows a rock/wood/plant with a fresh seed; **↺ Type defaults** restores a rock's preset values; tint swatches recolor it; **Drop** re-seats it on the substrate.
 
 ### Theme
 - **☀️ / 🌙** toggles a fully adapted dojo — glowing shoji by day, lantern-lit wood by evening; walls, floor, ceiling beams, lighting and UI all switch.
@@ -58,7 +58,7 @@ npm run build    # production bundle in dist/
 Live chips along the bottom report tank volume in litres, substrate litres + kg, rock litres + kg, wood litres, and plant count — updating as you work.
 
 ## Procedural generation notes
-- **Rocks** are noise-displaced icospheres: Ohko gets horizontal strata + deep ridged crevices; Seiryu gets angular facets + dark veining; lava rock gets pores; slate gets vertical banding. Every instance is seeded — reroll until you like it.
+- **Rocks** are simplex-noise displaced solids, one shape formula per type (Ohko: deep crevices; Seiryu: sharp ridges; lava: pores; pebbles: near-smooth; slate: warped flat shards). Every knob — resolution, noise freq/amp, scale XYZ, seed, colour, roughness, metalness, flat/smooth shading — is live in the inspector, and each type's defaults live in `ROCK_TYPES` (`src/presets.js`). Every instance is seeded, so reroll until you like it.
 - **Wood** grows recursively: a tapered trunk with gnarl noise, spread-angled children, plus spiderwood's curling root tendrils, merged into one mesh with a generated bark texture.
 - **Plants** (11 species) cover rosettes (swords, anubias, crypts), solid-leaf ferns (java fern ruffled blades), grasses (hairgrass, blyxa), tape-grass ribbons (vallisneria), stem plants (ludwigia — hue-shift them toward red), and moss/carpet patches. All species render in one calibrated rich aquarium-green window.
 - **Substrate** is a heightfield (~85×55 cells) with a canvas splat map blending the top-dress layer in a shader; the calculator integrates the heightfield for litre-accurate volume.

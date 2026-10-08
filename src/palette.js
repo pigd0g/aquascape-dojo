@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { TANK_PRESETS, SUBSTRATES, ROCK_TYPES, WOOD_TYPES, PLANT_TYPES } from './presets.js';
 import { applyHue as applyHueShift } from './placement.js';
+import { rebuildRock, resetRockToDefaults } from './hardscape.js';
 import { rerollPlant } from './plants.js';
 
 const EM = { rock: '🪨', wood: '🪵', plant: '🌿', substrate: '⛰️', tank: '🛠️' };
@@ -401,6 +402,7 @@ export class Palette {
     const u = obj.userData;
     const typeDef = u.def;
     const name = typeDef?.name ?? u.typeKey;
+    const isRock = u.kindKey === 'rock' && !!u.params;
     const r = this.tank.floorRect;
     const H = this.tank.state.h;
     const degY = ((Math.round(THREE.MathUtils.radToDeg(obj.rotation.y)) % 360) + 360) % 360;
@@ -431,14 +433,15 @@ export class Palette {
       <div class="heading">Size & look</div>
       <div class="ctl"><div class="lab"><span>Size</span><input type="number" id="o-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x.toFixed(2)}" /></div>
         <input type="range" id="in-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x}" /></div>
-      ${u.kindKey === 'rock' || u.kindKey === 'wood' ? `
+      ${isRock ? this._rockParamMarkup(u.params) : ''}
+      ${!isRock && (u.kindKey === 'rock' || u.kindKey === 'wood') ? `
       <div class="row2" style="margin-top:8px">
         <button class="btn" id="in-reroll">🎲 Reroll shape</button>
       </div>` : ''}
       ${u.kindKey === 'plant' ? `
       <div class="ctl"><div class="lab"><span>Hue shift</span><output id="o-hue">${Math.round((u.params?.hue ?? 0) * 360)}°</output></div>
         <input type="range" id="in-hue" min="-0.5" max="0.5" step="0.01" value="${u.params?.hue ?? 0}" /></div>` : ''}
-      ${u.kindKey === 'rock' || u.kindKey === 'wood' ? `
+      ${!isRock && (u.kindKey === 'rock' || u.kindKey === 'wood') ? `
       <div class="ctl"><div class="lab"><span>Tint</span></div><div class="swatches" id="in-tints"></div></div>` : ''}
     `;
 
@@ -507,9 +510,9 @@ export class Palette {
     const rr = q('#in-reroll');
     if (rr) rr.addEventListener('click', () => {
       if (u.kindKey === 'rock' || u.kindKey === 'wood') {
-        // shared path with the top-bar reroll (rocks & wood)
-        const fresh = this.placement.rerollSelected();
-        if (this.placement.selected === fresh) this._showInspector(fresh);
+        // shared path with the top-bar reroll; rocks rebuild in place and
+        // report through onSelection, which re-renders this panel (new seed)
+        this.placement.rerollSelected();
         return;
       }
       const ns = (Math.random() * 1e9) | 0;
@@ -537,19 +540,52 @@ export class Palette {
 
     const tints = q('#in-tints');
     if (tints) {
-      for (const hex of typeDef.tints ?? []) {
-        const s = document.createElement('button');
-        s.className = 'swatch';
-        s.style.background = hex;
-        s.addEventListener('click', () => tintObject(obj, hex));
-        tints.appendChild(s);
-      }
-      const custom = document.createElement('input');
-      custom.type = 'color';
-      custom.style.cssText = 'width:24px;height:24px;border:none;background:none;cursor:pointer';
-      custom.addEventListener('input', () => tintObject(obj, custom.value));
-      tints.appendChild(custom);
+      this._buildSwatches(tints, typeDef?.tints ?? [], (hex) => tintObject(obj, hex));
     }
+
+    if (isRock) this._bindRockParams(obj);
+  }
+
+  // ---------- rock params (Geometry & noise / Transform / Material) ----------
+  /** Collapsible param groups for a selected rock, mirroring the prototype. */
+  _rockParamMarkup(p) {
+    const row = (id, label, min, max, step, value) => `
+      <div class="ctl"><div class="lab"><span>${label}</span><input type="number" id="o-${id}" min="${min}" max="${max}" step="${step}" value="${value}" /></div>
+        <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}" /></div>`;
+    const group = (title, body) => `
+      <details class="pgrp" open><summary class="heading">${title}</summary>${body}</details>`;
+    const on = (flag) => (flag ? 'active' : '');
+
+    return `
+      ${group('Geometry & noise', [
+        row('rp-res', 'Resolution', 8, 128, 1, p.resolution),
+        row('rp-bf', 'Base noise freq', 0, 10, 0.01, p.baseFrequency),
+        row('rp-ba', 'Base noise amp', 0, 2, 0.001, p.baseAmplitude),
+        row('rp-df', 'Detail noise freq', 0, 25, 0.1, p.detailFrequency),
+        row('rp-da', 'Detail noise amp', 0, 2, 0.01, p.detailAmplitude),
+        row('rp-seed', 'Random seed', 0, 100, 0.001, p.seedOffset),
+      ].join(''))}
+      ${group('Transform', [
+        row('rp-sx', 'Scale X', 0.1, 3, 0.05, p.scaleX),
+        row('rp-sy', 'Scale Y', 0.1, 3, 0.05, p.scaleY),
+        row('rp-sz', 'Scale Z', 0.1, 3, 0.05, p.scaleZ),
+      ].join(''))}
+      ${group('Material', `
+        <div class="ctl"><div class="lab"><span>Colour</span></div>
+          <div class="swatches" id="rp-tints"></div></div>
+        ${row('rp-rough', 'Roughness', 0, 1, 0.01, p.roughness)}
+        ${row('rp-metal', 'Metalness', 0, 1, 0.01, p.metalness)}
+        <div class="ctl"><div class="lab"><span>Flat shading</span></div>
+          <div class="seg" id="rp-flat">
+            <button data-flat="1" class="${on(p.flatShading)}">Faceted</button>
+            <button data-flat="0" class="${on(!p.flatShading)}">Smooth</button>
+          </div></div>
+      `)}
+      <div class="row2" style="margin-top:10px">
+        <button class="btn" id="in-reroll">🎲 Reroll shape</button>
+        <button class="btn" id="rp-reset">↺ Type defaults</button>
+      </div>
+    `;
   }
 
   /** Slider + synced numeric field for one axis. */
@@ -560,15 +596,121 @@ export class Palette {
     </div>`;
   }
 
+  /** Swatch row (type tints + custom picker) wired to `onPick`. */
+  _buildSwatches(box, tints, onPick) {
+    for (const hex of tints) {
+      const s = document.createElement('button');
+      s.className = 'swatch';
+      s.style.background = hex;
+      s.dataset.hex = hex;
+      s.addEventListener('click', () => onPick(hex));
+      box.appendChild(s);
+    }
+    const custom = document.createElement('input');
+    custom.type = 'color';
+    custom.style.cssText = 'width:24px;height:24px;border:none;background:none;cursor:pointer';
+    custom.addEventListener('input', () => onPick(custom.value));
+    box.appendChild(custom);
+  }
+
+  /**
+   * Wire the rock param groups. Edits are written to userData.params and
+   * applied through a short debounce (same idea as the calculator chips) so
+   * dragging a slider doesn't rebuild the geometry on every pixel.
+   */
+  _bindRockParams(obj) {
+    const box = this.inspector;
+    const u = obj.userData;
+    const q = (s) => box.querySelector(s);
+    // NB: always read/write through `u.params` — rebuildRock replaces the
+    // params object, so a captured reference would go stale.
+    const live = () => u.params;
+
+    const push = (patch) => {
+      Object.assign(live(), patch);
+      this._scheduleRockRebuild(obj);
+    };
+
+    for (const [id, key] of [
+      ['rp-res', 'resolution'],
+      ['rp-bf', 'baseFrequency'],
+      ['rp-ba', 'baseAmplitude'],
+      ['rp-df', 'detailFrequency'],
+      ['rp-da', 'detailAmplitude'],
+      ['rp-seed', 'seedOffset'],
+      ['rp-sx', 'scaleX'],
+      ['rp-sy', 'scaleY'],
+      ['rp-sz', 'scaleZ'],
+      ['rp-rough', 'roughness'],
+      ['rp-metal', 'metalness'],
+    ]) {
+      this._bindAxis(q, id, (v) => push({ [key]: v }), (v) => (Number.isInteger(+v) ? String(v) : (+v).toFixed(3)));
+    }
+
+    const swatches = q('#rp-tints');
+    if (swatches) {
+      this._buildSwatches(swatches, u.def?.tints ?? [], (hex) => {
+        push({ color: hex });
+        swatches.querySelectorAll('.swatch').forEach((s) => {
+          s.classList.toggle('sel', s.dataset.hex === hex);
+        });
+      });
+      swatches.querySelectorAll('.swatch').forEach((s) => {
+        s.classList.toggle('sel', s.dataset.hex === live().color);
+      });
+    }
+
+    const seg = q('#rp-flat');
+    if (seg) {
+      seg.addEventListener('click', (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        seg.querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b));
+        // shading is a material flag: apply straight away (no geometry work)
+        live().flatShading = b.dataset.flat === '1';
+        obj.material.flatShading = live().flatShading;
+        obj.material.needsUpdate = true;
+      });
+    }
+
+    q('#rp-reset')?.addEventListener('click', () => {
+      resetRockToDefaults(obj);
+      if (u.autoY !== false) this.placement.settleOne(obj);
+      this.placement._changed();
+      this._showInspector(obj); // re-render: every row moved back to its default
+    });
+  }
+
+  /**
+   * Debounced in-place rebuild of a rock (geometry + material stay put).
+   * A resolution change needs a full rebuild + vertex weld (hundreds of ms at
+   * the top of the range), so it waits longer than a cheap noise/scale tweak —
+   * dragging the slider stays smooth and only the final value pays.
+   */
+  _scheduleRockRebuild(obj) {
+    const structural = obj.userData.params.resolution !== obj.userData._res;
+    clearTimeout(this._rockTimer);
+    this._rockTimer = setTimeout(() => {
+      if (!this.placement.objects.includes(obj)) return; // deleted while pending
+      rebuildRock(obj, {});
+      if (obj.userData.autoY !== false) this.placement.settleOne(obj);
+      this.placement._changed();
+    }, structural ? 220 : 90);
+  }
+
   _bindAxis(q, id, apply, fmtOut = (v) => v.toFixed(1)) {
     const slider = q('#' + id);
     const num = q('#o-' + id);
     const commit = (v, src) => {
-      v = Math.min(+slider.max, Math.max(+slider.min, v));
-      apply(v);
-      if (src !== 's') slider.value = v;
-      if (src !== 'n') num.value = fmtOut(v);
-      else num.value = v;
+      const raw = +v;
+      if (Number.isNaN(raw)) return;
+      const c = Math.min(+slider.max, Math.max(+slider.min, raw));
+      apply(c);
+      if (src !== 's') slider.value = c;
+      // only rewrite the number field when the value was actually clamped —
+      // otherwise typing decimals would be impossible ("3.2" → "3.")
+      if (src !== 'n') num.value = fmtOut(c);
+      else if (c !== raw) num.value = fmtOut(c);
     };
     slider.addEventListener('input', () => commit(+slider.value, 's'));
     num.addEventListener('input', () => commit(+num.value, 'n'));

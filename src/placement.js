@@ -1,7 +1,7 @@
 // Placement: spawn, drag & drop, transform controls, gravity settle, undo/redo.
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import { createRock, rerollRock } from './hardscape.js';
+import { createRock, rebuildRock, seedToOffset } from './hardscape.js';
 import { createWood, rerollWood } from './wood.js';
 import { createPlant } from './plants.js';
 import { ROCK_TYPES, WOOD_TYPES, PLANT_TYPES } from './presets.js';
@@ -96,10 +96,13 @@ export class Placement {
   }
 
   _stamp(obj) {
-    // record per-object params for inspector + save/load
+    // record per-object params for inspector + save/load. Rocks already carry
+    // their full resolved params from createRock — never clobber them here.
     const u = obj.userData;
     if (u.kind === 'plant') {
       u.params = { seed: u.seed, scaleMul: 1, tint: 0, hueJitterSeed: 0 };
+    } else if (u.kind === 'rock') {
+      u.params = u.params ?? { seed: u.seed, tint: null };
     } else {
       u.params = { seed: u.seed, tint: null };
     }
@@ -135,9 +138,20 @@ export class Placement {
     const u = obj.userData;
     if (u.kindKey !== 'rock' && u.kindKey !== 'wood') return;
     const ns = (Math.random() * 1e9) | 0;
-    const fresh = u.kindKey === 'rock'
-      ? rerollRock(obj, ns)
-      : rerollWood(obj, ns);
+
+    if (u.kindKey === 'rock') {
+      // in-place: geometry + material rebuilt on the same mesh, so the
+      // selection, gizmo and transform are untouched. Only the noise region
+      // moves — proportions, colour and rotation stay as the user set them.
+      u.seed = ns;
+      rebuildRock(obj, { seedOffset: seedToOffset(ns) });
+      if (u.autoY !== false) this.settleOne(obj);
+      this._changed();
+      this.onSelection && this.onSelection(obj);
+      return obj;
+    }
+
+    const fresh = rerollWood(obj, ns);
     fresh.position.copy(obj.position);
     fresh.rotation.copy(obj.rotation);
     fresh.scale.copy(obj.scale);
@@ -560,7 +574,7 @@ Placement._nextId = 0;
 // ================= serialization =================
 export function serializeSingle(obj) {
   const u = obj.userData;
-  return {
+  const snap = {
     kindKey: u.kindKey,
     typeKey: u.typeKey,
     seed: u.seed,
@@ -573,6 +587,10 @@ export function serializeSingle(obj) {
     tint: u.params?.tint ?? null,
     autoY: u.autoY === false ? false : true,
   };
+  // rocks carry their full resolved params (shape + material) so editing a
+  // preset later can't silently reshape a saved layout
+  if (u.kindKey === 'rock' && u.params) snap.params = { ...u.params };
+  return snap;
 }
 
 export function spawnFromData(s) {
@@ -580,7 +598,7 @@ export function spawnFromData(s) {
   let obj = null;
   const rnd = s.seed ?? ((Math.random() * 1e9) | 0);
   try {
-    if (s.kindKey === 'rock') obj = createRock(s.typeKey, rnd);
+    if (s.kindKey === 'rock') obj = createRock(s.typeKey, rnd, { params: s.params });
     else if (s.kindKey === 'wood') obj = createWood(s.typeKey, rnd);
     else if (s.kindKey === 'plant') obj = createPlant(s.typeKey, rnd, s.scaleMul ?? 1);
   } catch {

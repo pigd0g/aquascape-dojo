@@ -197,6 +197,17 @@ select:focus, input:focus { outline: none; border-color: rgba(217, 179, 106, 0.5
 }
 #inspector .ttl .x { cursor: pointer; color: var(--ink-dim); font-size: 14px; padding: 2px 4px; }
 #inspector .ttl .x:hover { color: var(--danger); }
+
+/* collapsible param groups (rock inspector) — same look as .heading */
+.pgrp { margin-top: 12px; }
+.pgrp > summary.heading { margin: 0 0 6px; cursor: pointer; list-style: none; }
+.pgrp > summary.heading::-webkit-details-marker { display: none; }
+.pgrp > summary.heading::before {
+  content: "▸"; font-size: 9px; color: var(--ink-dim);
+  transition: transform 0.12s; display: inline-block;
+}
+.pgrp[open] > summary.heading::before { transform: rotate(90deg); }
+.pgrp > summary.heading::after { margin-left: 6px; }
 .badge {
   font: 700 9px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--accent); border: 1px solid rgba(217, 179, 106, 0.4);

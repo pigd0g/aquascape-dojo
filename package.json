@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "simplex-noise": "4.0.1",
     "three": "0.160.0"
   },
   "devDependencies": {
