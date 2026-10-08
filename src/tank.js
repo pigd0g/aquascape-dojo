@@ -1,6 +1,13 @@
 // Parametric rimless tank + display stand, water fill, glass material.
 import * as THREE from "three";
 
+/**
+ * Fixed stand height (cm) — the value the default 60×30×36 tank produces.
+ * The stand footprint still tracks the tank width/depth, but its height never
+ * scales with the tank, so tall tanks aren't propped ever higher.
+ */
+export const STAND_H = 31;
+
 export class Tank {
   constructor(scene) {
     this.scene = scene;
@@ -118,7 +125,7 @@ export class Tank {
 
     // stand
     if (this.state.stand) {
-      const standH = Math.max(28, Math.round(h * 0.85));
+      const standH = STAND_H;
       const sw = w + 8,
         sd = d + 8;
       const standMat = new THREE.MeshStandardMaterial({

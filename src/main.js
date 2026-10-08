@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { createScene } from './scene.js';
-import { Tank } from './tank.js';
+import { Tank, STAND_H } from './tank.js';
 import { Substrate } from './substrate.js';
 import { Placement } from './placement.js';
 import { Palette } from './palette.js';
@@ -34,13 +34,13 @@ btn('act-theme').addEventListener('click', () => setThemeUI(!lightMode));
 // ---------------- framing ----------------
 /** Lift/lower the gallery floor & walls so the stand (which hangs below y=0) never clips through. */
 function syncStage() {
-  const standH = tank.state.stand ? Math.max(28, Math.round(tank.state.h * 0.85)) + 4 : 0;
+  const standH = tank.state.stand ? STAND_H + 4 : 0;
   sceneMgr.setStageY?.(-Math.max(0, standH - 8));
 }
 
 function frameCamera() {
   const { w } = tank.state;
-  const standH = tank.state.stand ? Math.max(28, Math.round(tank.state.h * 0.85)) : 0;
+  const standH = tank.state.stand ? STAND_H : 0;
   const topY = tank.state.h;                        // tank rim
   const midY = (topY - (tank.state.stand ? standH : 0)) / 2;
   controls.target.set(0, midY, 0);
