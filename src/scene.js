@@ -57,12 +57,15 @@ const DAY = {
 };
 
 // ---------------- room dimensions ----------------
+// All values in cm (world unit = cm). Human-scale hall: the roof sits 3 m
+// above the floor, so even a 100 cm tank on its stand clears it with headroom.
 const RX = 170,
   RZ = 150,
-  RH = 120; // half extents + wall height
+  RH = 300; // half extents + wall/roof height
 const WAIN = 27; // wainscot cap height
 const PY = WAIN,
-  PH = 65; // shoji band: base y, panel height
+  PH = RH - PY - 16; // shoji band: base y, panel height — top rail tucks
+// under the ceiling coffer (whose lowest bars hang at RH-15)
 
 // ---------------- canvas textures ----------------
 
@@ -481,7 +484,8 @@ export function createScene(container) {
 
   // ---- shoji screens: back wall (5 panels) + both side walls (4 each) ----
   // Lattice: pillars between panels, top & bottom rails, then a fine kumiko
-  // grid (5 cols × 6 rows of roughly square cells) over glowing paper.
+  // grid (5 cols × ~25 rows — cells stay square via the auto-computed rows)
+  // over glowing paper.
   const frameBoxes = [];
   const PAPER_W = 50,
     BAR = 1.2;
@@ -534,7 +538,7 @@ export function createScene(container) {
       const pw = PAPER_W,
         phh = PH - 6,
         cols = 5,
-        rows = 6;
+        rows = Math.max(4, Math.round(phh / (pw / cols))); // cells stay square
       // vertical bars
       for (let i = 1; i < cols; i++) {
         const bu = u - pw / 2 + (pw / cols) * i;
@@ -570,8 +574,10 @@ export function createScene(container) {
   // The shell still RECEIVES shadows from the tank and plant.
   room.add(makeInstanced(frameBoxes, frameMat));
 
-  // warm point lights just under the ceiling beams — the evening lamp glow
+  // warm point lights in the upper room — the evening lamp glow
   // (in day mode their intensity drops to 0; the glowing shoji paper takes over)
+  // Heights left at their original values: the sources are invisible, and
+  // moving them with the roof would change the calibrated plant/room shading.
   const lampA = new THREE.PointLight(0xffb36b, 0, 240, 1.6);
   lampA.position.set(-60, 96, 30);
   scene.add(lampA);
@@ -633,13 +639,15 @@ export function createScene(container) {
   room.add(plant);
 
   // ---- ceiling: coffered kumiko beam grid ----
+  // Offsets hang below the roof line RH, so the coffer keeps identical bar
+  // sizes/spacing (and the kumiko cells their scale) at any room height.
   const beamBoxes = [];
   // primary beams spanning X (thick) at intervals along Z
   for (const z of [-120, -60, 0, 60, 120])
-    beamBoxes.push({ x: 0, y: 110.5, z, sx: 2 * RX, sy: 5, sz: 4.4 });
+    beamBoxes.push({ x: 0, y: RH - 9.5, z, sx: 2 * RX, sy: 5, sz: 4.4 });
   // primary beams spanning Z — world extents, no rotation needed
   for (const x of [-136, -68, 0, 68, 136])
-    beamBoxes.push({ x, y: 108.6, z: 0, sx: 3, sy: 3.4, sz: 2 * RZ });
+    beamBoxes.push({ x, y: RH - 11.4, z: 0, sx: 3, sy: 3.4, sz: 2 * RZ });
   // fine secondary lattice: thin bars between each pair of primary beams
   for (const [a, b] of [
     [-120, -60],
@@ -650,7 +658,7 @@ export function createScene(container) {
     const step = (b - a) / 3;
     for (let i = 1; i <= 2; i++) {
       const z = a + step * i;
-      beamBoxes.push({ x: 0, y: 106.4, z, sx: 2 * RX, sy: 1.8, sz: 1.4 });
+      beamBoxes.push({ x: 0, y: RH - 13.6, z, sx: 2 * RX, sy: 1.8, sz: 1.4 });
     }
   }
   for (const [a, b] of [
@@ -662,14 +670,14 @@ export function createScene(container) {
     const step = (b - a) / 3;
     for (let i = 1; i <= 2; i++) {
       const x = a + step * i;
-      beamBoxes.push({ x, y: 105.8, z: 0, sx: 1.4, sy: 1.8, sz: 2 * RZ });
+      beamBoxes.push({ x, y: RH - 14.2, z: 0, sx: 1.4, sy: 1.8, sz: 2 * RZ });
     }
   }
   // perimeter rail where walls meet the ceiling
-  beamBoxes.push({ x: 0, y: 114.5, z: -RZ + 1.5, sx: 2 * RX, sy: 3, sz: 3 });
-  beamBoxes.push({ x: 0, y: 114.5, z: RZ - 1.5, sx: 2 * RX, sy: 3, sz: 3 });
-  beamBoxes.push({ x: -RX + 1.5, y: 114.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
-  beamBoxes.push({ x: RX - 1.5, y: 114.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
+  beamBoxes.push({ x: 0, y: RH - 5.5, z: -RZ + 1.5, sx: 2 * RX, sy: 3, sz: 3 });
+  beamBoxes.push({ x: 0, y: RH - 5.5, z: RZ - 1.5, sx: 2 * RX, sy: 3, sz: 3 });
+  beamBoxes.push({ x: -RX + 1.5, y: RH - 5.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
+  beamBoxes.push({ x: RX - 1.5, y: RH - 5.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
   room.add(makeInstanced(beamBoxes, beamMat)); // shell: receives, never casts
 
   const ceiling = new THREE.Mesh(

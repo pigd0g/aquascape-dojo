@@ -410,6 +410,10 @@ export class Palette {
     box.classList.remove('hidden');
     box.innerHTML = `
       <div class="ttl"><span>${EM[u.kindKey] ?? '⬚'} ${name} <span class="badge">${u.kindKey}</span></span><span class="x" title="Deselect">✕</span></div>
+
+      <div class="ctl"><div class="lab"><span>Size</span><input type="number" id="o-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x.toFixed(2)}" /></div>
+        <input type="range" id="in-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x}" /></div>
+
       <div class="row3">
         <button class="btn" id="in-dup">Duplicate</button>
         <button class="btn" id="in-settle">Drop</button>
@@ -430,9 +434,7 @@ export class Palette {
         <button class="btn" id="in-north">⥂ Face front</button>
       </div>
 
-      <div class="heading">Size & look</div>
-      <div class="ctl"><div class="lab"><span>Size</span><input type="number" id="o-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x.toFixed(2)}" /></div>
-        <input type="range" id="in-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x}" /></div>
+      <div class="heading">Look</div>
       ${isRock ? this._rockParamMarkup(u.params) : ''}
       ${!isRock && (u.kindKey === 'rock' || u.kindKey === 'wood') ? `
       <div class="row2" style="margin-top:8px">

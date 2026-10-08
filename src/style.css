@@ -188,7 +188,8 @@ select:focus, input:focus { outline: none; border-color: rgba(217, 179, 106, 0.5
 
 #inspector {
   border-top: 1px solid var(--line); padding: 12px 14px 14px;
-  max-height: 46%; overflow-y: auto; background: var(--panel2);
+  /* fixed 60/40 split with the library panes while an object is selected */
+  flex: 0 0 60%; min-height: 0; overflow-y: auto; background: var(--panel2);
 }
 #inspector.hidden { display: none; }
 #inspector .ttl {
