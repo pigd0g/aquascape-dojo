@@ -1,5 +1,6 @@
-// Plant generation — rosettes, ferns, grasses, ribbons, stems, moss cushions.
+// Plant generation — rosettes, ferns, grasses, ribbons, stems, moss fronds.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PLANT_TYPES } from './presets.js';
 import { mulberry32, clamp } from './noise.js';
 
@@ -55,6 +56,62 @@ function leafGeometryOval(len, width, seg = 5) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   g.computeVertexNormals(); // was missing → black leaves
+  return g;
+}
+
+// scratch for mossFrondGeometry — no per-frond allocation
+const _tangent = new THREE.Vector3();
+const _side = new THREE.Vector3();
+const _axisZ = new THREE.Vector3(0, 0, 1);
+const _rollQ = new THREE.Quaternion();
+
+/**
+ * One java-moss strand: a hair-fine tapering ribbon that rises straight along
+ * +Y, then leans over as t²·curl — the tip curling hardest, which is what makes
+ * a clump read as draped fuzz instead of standing grass. `wander` sways the
+ * centreline sideways and `roll` twists the ribbon cross-section, so strands
+ * criss-cross and catch light from every angle; the caller yaws each strand
+ * outward and leans it via a quaternion.
+ */
+function mossFrondGeometry(len, width, curl, wander, roll, seg = 6) {
+  // 1) centreline — integrate a heading that curls harder toward the tip
+  const cx = [], cy = [], cz = [];
+  const step = len / seg;
+  let x = 0, y = 0, z = 0;
+  for (let i = 0; i <= seg; i++) {
+    cx.push(x); cy.push(y); cz.push(z);
+    const t = (i + 0.5) / seg;
+    const bend = curl * t * t;
+    x += Math.sin(bend) * step;
+    y += Math.cos(bend) * step;
+    // lazy side-to-side wobble; `roll` seeds the phase so no two strands match
+    z += Math.sin((i + 0.5) * 1.9 + roll) * wander * step;
+  }
+  // 2) ribbon cross-section along the centreline
+  const pos = [], uvs = [], idx = [];
+  for (let i = 0; i <= seg; i++) {
+    const t = i / seg;
+    const i0 = Math.max(0, i - 1), i1 = Math.min(seg, i + 1);
+    _tangent.set(cx[i1] - cx[i0], cy[i1] - cy[i0], cz[i1] - cz[i0]).normalize();
+    _side.crossVectors(_tangent, _axisZ); // mostly-horizontal ribbon axis
+    if (_side.lengthSq() < 1e-8) _side.set(1, 0, 0);
+    else _side.normalize();
+    _rollQ.setFromAxisAngle(_tangent, roll * t);
+    _side.applyQuaternion(_rollQ);
+    const w = width * (0.35 + 0.65 * (1 - t)) * 0.5; // taper toward the tip
+    pos.push(cx[i] - _side.x * w, cy[i] - _side.y * w, cz[i] - _side.z * w);
+    pos.push(cx[i] + _side.x * w, cy[i] + _side.y * w, cz[i] + _side.z * w);
+    uvs.push(0, t, 1, t);
+  }
+  for (let i = 0; i < seg; i++) {
+    const a = i * 2;
+    idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
   return g;
 }
 
@@ -281,23 +338,82 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
       }
     }
   } else if (kind === 'moss') {
-    const R = def.spread[0] + rnd() * (def.spread[1] - def.spread[0]);
-    const height = def.height[0] + rnd() * (def.height[1] - def.height[0]);
-    const n = 90;
-    const patch = new THREE.Group();
-    const geoSmall = new THREE.SphereGeometry(1, 7, 5);
-    for (let i = 0; i < n; i++) {
-      const a = rnd() * Math.PI * 2;
-      const r = Math.sqrt(rnd()) * R;
-      const sc = height * (0.4 + rnd() * 0.8);
-      const blob = new THREE.Mesh(geoSmall, i % 2 ? mat2 : mat);
-      blob.position.set(Math.cos(a) * r, sc * 0.35, Math.sin(a) * r);
-      blob.scale.set(sc * 1.9, sc * 0.8, sc * 1.9);
-      blob.rotation.set(rnd() * 0.4, rnd() * Math.PI, rnd() * 0.4);
-      patch.add(blob);
+    // Java moss: a low tangled heap of hair-fine strands — closer to a pile of
+    // spaghetti than to grass. Bases fill the upper half of a squashed
+    // ellipsoid (so nothing sprouts under the substrate), and strands run
+    // mostly HORIZONTALLY — lying across the pile, draping over its flanks —
+    // with heavy curl so they loop back on themselves. The heap is
+    // deliberately wider than it is tall. Strands merge into one
+    // geometry per leaf tone (2 draw calls per patch): per-strand jitter isn't
+    // possible with instancing, and it's far cheaper than the old blob patch.
+    const Rc = rndRange(def.spread[0], def.spread[1]);   // pile radius (cm)
+    const Hi = rndRange(def.height[0], def.height[1]);   // pile height (cm)
+    const n = Math.round(rndRange(def.fronds[0], def.fronds[1]));
+    const wispN = Math.round(n * 0.03);                   // stray outer threads
+    const geos = [[], []];                               // [main tone, highlight]
+
+    for (let i = 0; i < n + wispN; i++) {
+      const wisp = i >= n;
+      let bx, by, bz, dirX, dirY, dirZ, len, curl;
+      if (wisp) {
+        // loose threads escaping the heap, like the sprigs in the reference
+        const phi = rnd() * Math.PI * 2;
+        const rr = Rc * (0.8 + rnd() * 0.4);
+        bx = Math.cos(phi) * rr;
+        bz = Math.sin(phi) * rr;
+        by = Hi * (0.1 + rnd() * 0.5);
+        const lean = 0.75 + rnd() * 0.9;      // nearly horizontal: escape sideways
+        dirX = Math.sin(lean) * Math.cos(phi + (rnd() - 0.5) * 0.8);
+        dirY = Math.cos(lean) * 0.6;
+        dirZ = Math.sin(lean) * Math.sin(phi + (rnd() - 0.5) * 0.8);
+        len = Rc * (0.55 + rnd() * 0.5);
+        curl = 0.5 + rnd() * 0.9;             // wisps stay mostly straight
+      } else {
+        // base points uniform in the half-ellipsoid volume: cbrt(u) keeps the
+        // density even, and c = cosθ ∈ [0,1] trims the lower half so nothing
+        // sprouts under the substrate
+        const u = Math.cbrt(rnd());
+        const c = rnd();
+        const s = Math.sqrt(1 - c * c);
+        const phi = rnd() * Math.PI * 2;
+        bx = u * s * Math.cos(phi) * Rc;
+        bz = u * s * Math.sin(phi) * Rc;
+        by = u * c * Hi;
+        const radial = u * s;                 // 0 core .. 1 rim
+        // direction: lying across the pile. Any compass yaw; the height
+        // component drops slightly toward the rim so edge strands drape
+        // downward over the flanks.
+        const yaw = rnd() * Math.PI * 2;
+        dirX = Math.cos(yaw);
+        dirY = 0.15 * (1 - radial) - 0.3 * radial + (rnd() - 0.5) * 0.25;
+        dirZ = Math.sin(yaw);
+        len = Rc * (0.3 + rnd() * 0.45);
+        curl = 1.6 + rnd() * 2.4;             // tight spaghetti loops
+      }
+      const wander = 0.6 + rnd() * 1.3;
+      const roll = rnd() * Math.PI * 2;
+      const width = Rc * 0.009 * (0.7 + rnd() * 0.7);
+      const g = mossFrondGeometry(len, width, curl, wander, roll, wisp ? 6 : 7);
+      // point the strand along (dirX, dirY, dirZ); the geometry then curls to
+      // one side of that axis, and the random extra roll spins which way
+      const dir = new THREE.Vector3(dirX, dirY, dirZ).normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(_up, dir);
+      q.multiply(new THREE.Quaternion().setFromAxisAngle(_up, rnd() * Math.PI * 2));
+      const m = new THREE.Matrix4().compose(new THREE.Vector3(bx, by, bz), q, new THREE.Vector3(1, 1, 1));
+      g.applyMatrix4(m);
+      geos[wisp || rnd() < 0.4 ? 1 : 0].push(g);
     }
-    group.add(patch);
-    group.userData.spreadR = R;
+
+    for (let ti = 0; ti < geos.length; ti++) {
+      if (!geos[ti].length) continue;
+      const merged = mergeGeometries(geos[ti], false);
+      geos[ti].forEach((gg) => gg.dispose());
+      merged.computeVertexNormals();
+      const mesh = new THREE.Mesh(merged, ti ? mat2 : mat);
+      mesh.castShadow = true;
+      group.add(mesh);
+    }
+    group.userData.spreadR = Rc;
   }
 
   // overall bounding box

@@ -334,10 +334,14 @@ export const PLANT_TYPES = {
   },
   moss: {
     name: "Java moss patch",
-    brief: "Fuzzy cushion, tie it to wood or rock",
+    brief: "Tangled hair-fine fronds, tie it to wood or rock",
     kind: "moss",
-    spread: [0.25, 0.5],
-    height: [1.2, 2.6],
+    // real centimetres, like every other plant def (the old sphere-blob moss
+    // scaled metre-sized unit spheres by `height`). Wider than tall: a flat
+    // pile, not a mound.
+    spread: [2.5, 3.3],
+    height: [1.5, 2.1],
+    fronds: [2600, 3400],
     green: [0.32, 0.36],
     huer: [-0.015, 0.015],
     sat: [0.82, 0.88],
