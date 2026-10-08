@@ -343,28 +343,6 @@ export const PLANT_TYPES = {
     sat: [0.82, 0.88],
     cat: "Accent",
   },
-  carpet: {
-    name: "Carpet patch (HC)",
-    brief: "Low creeping ground cover",
-    kind: "carpet",
-    spread: [0.35, 0.6],
-    height: [0.7, 1.4],
-    green: [0.31, 0.35],
-    huer: [-0.015, 0.015],
-    sat: [0.82, 0.88],
-    cat: "Carpet",
-  },
-  montecarlo: {
-    name: "Monte carlo",
-    brief: "Rounded carpet pads, lush green",
-    kind: "carpet",
-    spread: [0.3, 0.5],
-    height: [0.8, 1.6],
-    green: [0.32, 0.36],
-    huer: [-0.015, 0.015],
-    sat: [0.82, 0.9],
-    cat: "Carpet",
-  },
 };
 
 export function fmt(n, dp = 0) {

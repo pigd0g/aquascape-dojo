@@ -55,28 +55,45 @@ function frameCamera() {
   sceneMgr.setTankFocus?.(0, 0, 0);
 }
 // ---------------- top bar ----------------
+// `tool` is 'select' (object picking) or 'brush' (the substrate brush, whose
+// exact mode — sculpt/paint/erase — lives in substrate.brush.tool).
+let tool = 'select';
+
 const setToolUI = (tool) => {
   btn('tool-select').classList.toggle('active', tool === 'select');
-  btn('tool-sculpt').classList.toggle('active', tool === 'sculpt');
-  document.getElementById('hint').textContent =
-    tool === 'sculpt'
-      ? 'Paint the substrate · [ ] adjust brush size · hold SHIFT to invert brush · RMB orbit · Shift+RMB pan'
-      : 'Drag items from the library onto the tank · click to select · RMB orbit · Shift+RMB pan · G / R / S = move, rotate, scale';
+  btn('tool-brush').classList.toggle('active', tool === 'brush');
+  let text;
+  if (tool !== 'brush') {
+    text = 'Drag items from the library onto the tank · click to select · RMB orbit · Shift+RMB pan · G / R / S = move, rotate, scale';
+  } else if (substrate.brush.tool === 'paint') {
+    text = 'Paint the top dress · [ ] brush size · click-drag on the substrate · RMB orbit · Shift+RMB pan';
+  } else if (substrate.brush.tool === 'erase') {
+    text = 'Erase the top dress · [ ] brush size · click-drag on the substrate · RMB orbit · Shift+RMB pan';
+  } else {
+    text = 'Sculpt the substrate · [ ] adjust brush size · hold SHIFT to invert brush · RMB orbit · Shift+RMB pan';
+  }
+  document.getElementById('hint').textContent = text;
 };
 
-let tool = 'select';
 setToolUI(tool); // paint initial hint text (index.html's static copy is stale)
 
-btn('tool-select').addEventListener('click', () => {
-  tool = 'select';
-  setToolUI('select');
-  placement.setSculptMode(false);
-  substrate.updateCursor(null, false);
-});
-btn('tool-sculpt').addEventListener('click', () => {
-  tool = 'sculpt';
-  setToolUI('sculpt');
-  placement.setSculptMode(true);
+/** Switch the top-bar tool and route the substrate brush accordingly. */
+function setTool(name) {
+  tool = name;
+  setToolUI(name);
+  placement.setSculptMode(name === 'brush');
+  if (name === 'brush') substrate.refreshCursor();
+  else substrate.updateCursor(null, false);
+  // keep the Substrate pane's 4-mode group in step with the top bar
+  window.__palette?.syncToolUI?.();
+}
+
+btn('tool-select').addEventListener('click', () => setTool('select'));
+btn('tool-brush').addEventListener('click', () => {
+  setTool('brush');
+  // the brush's mode (sculpt/paint/erase) is chosen in the Substrate tab, so
+  // entering Brush mode reveals exactly the controls that drive it
+  window.__palette?.showTab?.('substrate');
 });
 
 const setModeUI = (m) => {
@@ -148,6 +165,8 @@ function loadData(data) {
   substrate.dressType = data.substrate?.dress ?? 'sand';
   substrate.baseTint = data.substrate?.baseTint ?? 0;
   substrate.dressTint = data.substrate?.dressTint ?? 0;
+  substrate.baseCustom = data.substrate?.baseCustom ?? null;
+  substrate.dressCustom = data.substrate?.dressCustom ?? null;
   substrate._makeTextures();
   substrate._makeMaterial();
   if (data.substrate) {
@@ -167,6 +186,9 @@ function loadData(data) {
   }
   substrate._refresh();
   placement.loadAll(data.objects ?? []);
+  // saved material types / tints / custom colours just landed: re-render the
+  // Substrate pane so its cards, swatches and pickers match
+  palette.refreshSubstratePane?.();
   scheduleChips();
   syncStage();
   // tank.rebuild() recreated the water meshes hidden: apply the saved fill
@@ -202,8 +224,18 @@ let lastSculpt = 0;
 const shiftDown = { value: false };
 window.addEventListener('keydown', (e) => {
   shiftDown.value = e.shiftKey;
-  if (e.key === '[') substrate.brush.radius = Math.max(2, substrate.brush.radius - 1.5);
-  if (e.key === ']') substrate.brush.radius = Math.min(26, substrate.brush.radius + 1.5);
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === '[' || e.key === ']') {
+    // brush size is shared by the sculpt ring and the paintbrush cursor, and
+    // the dress + sculpt sliders both mirror it
+    const delta = e.key === '[' ? -1.5 : 1.5;
+    const r = Math.min(26, Math.max(2, substrate.brush.radius + delta));
+    if (r !== substrate.brush.radius) {
+      substrate.brush.radius = r;
+      window.__palette?.syncBrushSize(r);
+      substrate.refreshCursor();
+    }
+  }
 });
 window.addEventListener('keyup', (e) => { shiftDown.value = e.shiftKey; });
 
@@ -251,7 +283,7 @@ btn('act-view').addEventListener('click', () => setViewOnly(!viewOnly));
 
 placement.onHover = (ndc, e) => {
   if (viewOnly) return;
-  if (tool !== 'sculpt' || placement._dragging) return;
+  if (tool !== 'brush' || placement._dragging) return;
   const t = placement._tankRay(ndc);
   if (t) {
     substrate.updateCursor(t.point, true);
@@ -278,7 +310,7 @@ placement.onHover = (ndc, e) => {
 };
 
 window.addEventListener('pointerdown', (e) => {
-  if (!viewOnly && tool === 'sculpt' && e.button === 0 && e.target === renderer.domElement) sculpting = true;
+  if (!viewOnly && tool === 'brush' && e.button === 0 && e.target === renderer.domElement) sculpting = true;
 });
 window.addEventListener('pointerup', () => {
   if (sculpting) {
@@ -305,6 +337,7 @@ placement.gizmo.addEventListener('objectChange', () => {
 const palette = new Palette(placement, substrate, tank, {
   toggleWater,
   setWaterUI,
+  setTool, // paint-mode buttons switch the top bar into sculpt mode
   onTankResized: () => {
     scheduleChips();
     syncStage();          // lift the gallery floor so tall stands never clip

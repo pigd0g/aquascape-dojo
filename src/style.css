@@ -154,13 +154,16 @@ html, body {
 
 .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .card {
-  appearance: none; text-align: left; cursor: grab;
+  appearance: none; text-align: left; cursor: pointer;
   background: var(--panel2); color: var(--ink);
   border: 1px solid var(--line); border-radius: 11px; padding: 9px 10px 10px;
   display: flex; flex-direction: column; gap: 3px;
   transition: border-color 0.15s, background 0.15s, transform 0.06s;
 }
+/* only library cards (rocks / wood / plants) are draggable */
+.card[data-kind] { cursor: grab; }
 .card:hover { border-color: rgba(217, 179, 106, 0.5); background: #201f27; }
+.card.sel { border-color: rgba(217, 179, 106, 0.75); background: #201f27; }
 .card.dragging { opacity: 0.35; cursor: grabbing; }
 .card:active { transform: scale(0.98); }
 .card .em { font-size: 17px; line-height: 1; }

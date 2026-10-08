@@ -71,7 +71,10 @@ export class Palette {
     document.body.appendChild(ghost);
 
     let dragCard = null;
-    document.querySelectorAll('.card').forEach((card) => {
+    // Only library cards (rocks/wood/plants) are draggable. Substrate material
+    // and tank preset cards share the .card look but are click-to-apply — they
+    // must not start a "drop on tank" drag.
+    document.querySelectorAll('.card[data-kind]').forEach((card) => {
       card.addEventListener('pointerdown', (e) => {
         // view-only: the whole panel is hidden, but guard the drag anyway
         if (this.placement.viewOnly) return;
@@ -122,44 +125,44 @@ export class Palette {
   // ---------- substrate pane ----------
   _buildSubstratePane() {
     const pane = document.getElementById('pane-substrate');
-    const { baseType, dressType } = this.substrate;
 
     pane.innerHTML = `
-      <div class="heading">Sculpting brush</div>
-      <div class="seg" id="brush-seg">
-        <button data-brush="raise" class="active">▲ Raise</button>
-        <button data-brush="lower">▼ Lower</button>
-        <button data-brush="smooth">◐ Smooth</button>
-        <button data-brush="flatten">▬ Flatten</button>
+      <div class="heading">Brush</div>
+      <div class="seg" id="brush-mode-seg">
+        <button data-tool="select" class="active">⬚ Select</button>
+        <button data-tool="sculpt">⛰ Sculpt</button>
+        <button data-tool="paint">🎨 Paint</button>
+        <button data-tool="erase">✐ Erase</button>
       </div>
       <div class="ctl"><div class="lab"><span>Brush size</span><output id="o-bsize">8</output></div>
         <input type="range" id="i-bsize" min="2" max="26" step="0.5" value="8" /></div>
+      <div class="ctl"><div class="lab"><span>Shape</span></div>
+        <div class="seg" id="brush-seg">
+          <button data-brush="raise" class="active">▲ Raise</button>
+          <button data-brush="lower">▼ Lower</button>
+          <button data-brush="smooth">◐ Smooth</button>
+          <button data-brush="flatten">▬ Flatten</button>
+        </div></div>
       <div class="ctl"><div class="lab"><span>Strength</span><output id="o-bstr">1.1</output></div>
         <input type="range" id="i-bstr" min="0.2" max="4" step="0.1" value="1.1" /></div>
-      <div class="ctl"><div class="lab"><span>Tool</span></div>
-        <div class="seg" id="tool-seg">
-          <button data-tool="sculpt" class="active">⛰ Sculpt</button>
-          <button data-tool="paint">🎨 Paint dress</button>
-          <button data-tool="erase">✐ Erase dress</button>
-        </div></div>
 
       <div class="heading">Layout presets</div>
       <div class="row3">
-        <button class="btn" data-preset="slope">Slope ↑</button>
+        <button class="btn" data-preset="slope">Slope</button>
         <button class="btn" data-preset="island">Island</button>
         <button class="btn" data-preset="terrace">Terrace</button>
         <button class="btn" data-preset="valley">Valley</button>
         <button class="btn" data-preset="dune">Dunes</button>
-        <button class="btn warn" data-preset="flat">Flatten all</button>
+        <button class="btn warn" data-preset="reset">Reset</button>
       </div>
 
       <div class="heading">Base layer</div>
-      <div id="sub-base"></div>
+      <div class="cards" style="grid-template-columns:1fr 1fr" id="sub-base"></div>
       <div class="ctl"><div class="lab"><span>Tint</span></div><div class="swatches" id="sw-base"></div></div>
       <div class="ctl"><div class="lab"><span>Custom</span></div><div class="tintrow"><input type="color" id="col-base" value="#3a2f28" /><button class="btn" id="apply-base">Apply</button></div></div>
 
       <div class="heading">Top dress (paint over)</div>
-      <div id="sub-dress"></div>
+      <div class="cards" style="grid-template-columns:1fr 1fr" id="sub-dress"></div>
       <div class="ctl"><div class="lab"><span>Tint</span></div><div class="swatches" id="sw-dress"></div></div>
       <div class="ctl"><div class="lab"><span>Custom</span></div><div class="tintrow"><input type="color" id="col-dress" value="#d9c9ab" /><button class="btn" id="apply-dress">Apply</button></div></div>
 
@@ -182,39 +185,28 @@ export class Palette {
     const dressBox = pane.querySelector('#sub-dress');
     for (const [k, d] of Object.entries(SUBSTRATES)) dressBox.appendChild(matCard('dress', k, d));
 
-    // swatches
-    const swBase = pane.querySelector('#sw-base');
-    for (const [i, hex] of SUBSTRATES[this.substrate.baseType].tints.entries()) {
-      const s = document.createElement('button');
-      s.className = 'swatch' + (i === this.substrate.baseTint ? ' sel' : '');
-      s.style.background = hex;
-      s.dataset.i = i;
-      swBase.appendChild(s);
-    }
-    const swDress = pane.querySelector('#sw-dress');
-    for (const [i, hex] of SUBSTRATES[this.substrate.dressType].tints.entries()) {
-      const s = document.createElement('button');
-      s.className = 'swatch' + (i === this.substrate.dressTint ? ' sel' : '');
-      s.style.background = hex;
-      s.dataset.i = i;
-      swDress.appendChild(s);
-    }
+    // swatches (rebuilt whenever the layer's material type changes)
+    this._rebuildSwatches('base');
+    this._rebuildSwatches('dress');
 
     // ---- events ----
+    // One cursor-mode group for all four modes: Select hands the LMB back to
+    // object picking; Sculpt/Paint/Erase pick the substrate brush. This is the
+    // same state as the top bar's Select / Brush pair.
+    pane.querySelector('#brush-mode-seg').addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.tool === 'select') this.sceneMgr.setTool?.('select');
+      else this.setBrushTool(b.dataset.tool);
+    });
     pane.querySelector('#brush-seg').addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (!b) return;
       pane.querySelectorAll('#brush-seg button').forEach((x) => x.classList.remove('active'));
       b.classList.add('active');
       this.substrate.brush.kind = b.dataset.brush;
-    });
-    pane.querySelector('#tool-seg').addEventListener('click', (e) => {
-      const b = e.target.closest('button');
-      if (!b) return;
-      pane.querySelectorAll('#tool-seg tool-seg button');
-      pane.querySelectorAll('#tool-seg button').forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      this.substrate.brush.tool = b.dataset.tool;
+      // picking a sculpt shape implies the sculpt cursor
+      if (this.placement.sculptMode && this.substrate.brush.tool !== 'sculpt') this.setBrushTool('sculpt');
     });
     const link = (iid, oid, prop) => {
       const inp = pane.querySelector(iid), out = pane.querySelector(oid);
@@ -223,28 +215,36 @@ export class Palette {
         this.substrate.brush[prop] = +inp.value;
       });
     };
-    link('#i-bsize', '#o-bsize', 'radius');
     link('#i-bstr', '#o-bstr', 'strength');
+    // one shared radius for every brush cursor (sculpt ring / paintbrush)
+    const bsize = pane.querySelector('#i-bsize');
+    bsize.addEventListener('input', () => {
+      this.substrate.brush.radius = +bsize.value;
+      this.syncBrushSize(bsize.value);
+      this.substrate.refreshCursor();
+    });
 
     pane.querySelectorAll('[data-preset]').forEach((b) => {
       b.addEventListener('click', () => {
-        const prev = this.substrate.heights.slice();
         const name = b.dataset.preset;
-        if (name === 'flat') this.substrate.reset(this.substrate.heights[0] || 4);
-        else this.substrate.preset(name);
-        this.substrate._lastAction = { prev };
+        const prev = name === 'reset'
+          ? this.substrate.resetSubstrate()
+          : this.substrate.preset(name);
+        this.substrate._lastAction = prev;
         this.placement.settleAll();
       });
     });
 
-    // material & tint selection
+    // material & tint selection (custom colour and swatch selection are
+    // mutually exclusive: the last pick wins)
     pane.addEventListener('click', (e) => {
       const card = e.target.closest('[data-mat]');
       if (card) {
         const kind = card.dataset.mat, type = card.dataset.type;
-        if (kind === 'base') this.substrate.baseType = type;
-        else this.substrate.dressType = type;
+        if (kind === 'base') { this.substrate.baseType = type; this.substrate.baseCustom = null; }
+        else { this.substrate.dressType = type; this.substrate.dressCustom = null; }
         pane.querySelectorAll(`[data-mat="${kind}"]`).forEach((x) => x.classList.toggle('sel', x === card));
+        this._rebuildSwatches(kind);
         this.substrate.refreshMaterial();
       }
       const sw = e.target.closest('.swatch');
@@ -253,18 +253,22 @@ export class Palette {
         sw.parentElement.querySelectorAll('.swatch').forEach((x) => x.classList.remove('sel'));
         sw.classList.add('sel');
         const i = +sw.dataset.i;
-        if (id === 'sw-base') this.substrate.baseTint = i;
-        else this.substrate.dressTint = i;
+        if (id === 'sw-base') { this.substrate.baseTint = i; this.substrate.baseCustom = null; }
+        else { this.substrate.dressTint = i; this.substrate.dressCustom = null; }
         this.substrate.refreshMaterial();
       }
     });
 
+    // Custom colour: applies the picker colour to that layer and deselects the
+    // swatch/type picks so exactly one source of colour is active.
     pane.querySelector('#apply-base').addEventListener('click', () => {
       this.substrate.baseCustom = pane.querySelector('#col-base').value;
+      this.refreshSubstratePane();
       this.substrate.refreshMaterial();
     });
     pane.querySelector('#apply-dress').addEventListener('click', () => {
       this.substrate.dressCustom = pane.querySelector('#col-dress').value;
+      this.refreshSubstratePane();
       this.substrate.refreshMaterial();
     });
     pane.querySelector('#clear-dress').addEventListener('click', () => this.substrate.clearDress());
@@ -272,6 +276,102 @@ export class Palette {
       this.substrate.grainSeed = (Math.random() * 1e9) | 0;
       this.substrate.refreshMaterial();
     });
+
+    // cards, swatches and colour pickers render from the live substrate state
+    this.refreshSubstratePane();
+  }
+
+  /**
+   * Switch the substrate brush tool (sculpt / paint / erase). The pane's
+   * cursor-mode group and the top bar are two faces of one state, and picking
+   * a substrate brush always makes the top bar's Brush tool live.
+   */
+  setBrushTool(tool) {
+    const sub = this.substrate;
+    sub.brush.tool = tool;
+    this.sceneMgr.setTool?.('brush');
+    this._syncBrushToolUI();
+    sub.refreshCursor();
+  }
+
+  _syncBrushToolUI() {
+    // active mode = the substrate brush when the Brush tool is live,
+    // otherwise Select
+    const active = this.placement.sculptMode ? this.substrate.brush.tool : 'select';
+    const seg = this.el.querySelector('#brush-mode-seg');
+    if (!seg) return;
+    seg.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.tool === active);
+    });
+  }
+
+  /** Public alias: main.js re-syncs the pane whenever the top bar changes. */
+  syncToolUI() {
+    this._syncBrushToolUI();
+  }
+
+  /**
+   * Re-render the substrate pane's material cards, swatches and colour pickers
+   * from the current substrate state. Called after a layout load, when the
+   * save data has just replaced material type / tint / custom colours.
+   */
+  refreshSubstratePane() {
+    const pane = document.getElementById('pane-substrate');
+    if (!pane) return;
+    for (const kind of ['base', 'dress']) {
+      const type = kind === 'base' ? this.substrate.baseType : this.substrate.dressType;
+      const custom = kind === 'base' ? this.substrate.baseCustom : this.substrate.dressCustom;
+      pane.querySelectorAll(`[data-mat="${kind}"]`).forEach((x) => {
+        // a custom colour overrides the type pick too — nothing reads selected
+        x.classList.toggle('sel', !custom && x.dataset.type === type);
+      });
+      this._rebuildSwatches(kind);
+    }
+    const tintHex = (typeKey, tint) => {
+      const tints = SUBSTRATES[typeKey].tints;
+      return tints[Math.max(0, tint) % tints.length];
+    };
+    const colBase = pane.querySelector('#col-base'), colDress = pane.querySelector('#col-dress');
+    if (colBase) colBase.value = this.substrate.baseCustom ?? tintHex(this.substrate.baseType, this.substrate.baseTint);
+    if (colDress) colDress.value = this.substrate.dressCustom ?? tintHex(this.substrate.dressType, this.substrate.dressTint);
+    this._syncBrushToolUI();
+    this._syncBrushSizeUI();
+  }
+
+  /** Switch the library to a tab (used when the top bar enters Brush mode). */
+  showTab(tab) {
+    const t = this.el.querySelector(`.tab[data-tab="${tab}"]`);
+    if (t) t.click();
+  }
+
+  /** Mirror the shared brush radius into the size slider + readout. */
+  syncBrushSize(v = this.substrate.brush.radius) {
+    const bsize = this.el.querySelector('#i-bsize'), bsizeOut = this.el.querySelector('#o-bsize');
+    const t = (+v).toFixed(1).replace(/\.0$/, '');
+    if (bsize) { bsize.value = v; bsizeOut.textContent = t; }
+  }
+
+  _syncBrushSizeUI() {
+    this.syncBrushSize();
+  }
+
+  /** Rebuild one layer's tint swatch row from its current material type. */
+  _rebuildSwatches(kind) {
+    const pane = document.getElementById('pane-substrate');
+    const box = pane?.querySelector(`#sw-${kind}`);
+    if (!box) return;
+    const type = kind === 'base' ? this.substrate.baseType : this.substrate.dressType;
+    const tint = kind === 'base' ? this.substrate.baseTint : this.substrate.dressTint;
+    const custom = kind === 'base' ? this.substrate.baseCustom : this.substrate.dressCustom;
+    box.innerHTML = '';
+    for (const [i, hex] of SUBSTRATES[type].tints.entries()) {
+      const s = document.createElement('button');
+      // a custom colour overrides the swatches: none reads as selected
+      s.className = 'swatch' + (!custom && i === tint ? ' sel' : '');
+      s.style.background = hex;
+      s.dataset.i = i;
+      box.appendChild(s);
+    }
   }
 
   // ---------- tank pane ----------
@@ -369,6 +469,7 @@ export class Palette {
     this.substrate._makeMaterial();
     this.substrate.reset(this.substrate._baseDepth, true);
     this.substrate.brush.radius = Math.max(3, Math.min(18, st.w * 0.14));
+    this.syncBrushSize();
     // keep objects inside
     this.placement.settleAll();
     this.sceneMgr.onTankResized?.();
@@ -409,18 +510,23 @@ export class Palette {
     const H = this.tank.state.h;
     const degY = ((Math.round(THREE.MathUtils.radToDeg(obj.rotation.y)) % 360) + 360) % 360;
 
+    const isPlant = u.kindKey === 'plant';
+    // plants are placed small; rocks & wood need the full 0.3–16 band
+    const scMin = isPlant ? 0.1 : 0.3;
+    const scMax = isPlant ? 3 : 16;
+
     box.classList.remove('hidden');
     box.innerHTML = `
       <div class="ttl"><span>${EM[u.kindKey] ?? '⬚'} ${name} <span class="badge">${u.kindKey}</span></span><span class="x" title="Deselect">✕</span></div>
-
-      <div class="ctl"><div class="lab"><span>Size</span><input type="number" id="o-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x.toFixed(2)}" /></div>
-        <input type="range" id="in-sc" min="0.3" max="16" step="0.05" value="${obj.scale.x}" /></div>
 
       <div class="row3">
         <button class="btn" id="in-dup">Duplicate</button>
         <button class="btn" id="in-settle">Drop</button>
         <button class="btn warn" id="in-del">Delete</button>
       </div>
+
+      <div class="ctl" style="margin-top:10px"><div class="lab"><span>Size</span><input type="number" id="o-sc" min="${scMin}" max="${scMax}" step="0.05" value="${obj.scale.x.toFixed(2)}" /></div>
+        <input type="range" id="in-sc" min="${scMin}" max="${scMax}" step="0.05" value="${obj.scale.x}" /></div>
 
       <div class="heading">Position · cm</div>
       ${this._axisRow('in-px', 'Move X ↔', r.x0 + 0.5, r.x0 + r.w - 0.5, 0.1, obj.position.x, 1)}

@@ -280,10 +280,10 @@ function makePlant(typeKey, seed = (Math.random() * 1e9) | 0, scaleMul = 1) {
         }
       }
     }
-  } else if (kind === 'moss' || kind === 'carpet') {
+  } else if (kind === 'moss') {
     const R = def.spread[0] + rnd() * (def.spread[1] - def.spread[0]);
     const height = def.height[0] + rnd() * (def.height[1] - def.height[0]);
-    const n = kind === 'moss' ? 90 : 55;
+    const n = 90;
     const patch = new THREE.Group();
     const geoSmall = new THREE.SphereGeometry(1, 7, 5);
     for (let i = 0; i < n; i++) {

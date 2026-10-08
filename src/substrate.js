@@ -1,7 +1,69 @@
 // Sculptable substrate heightfield with painted top-dress layer.
 import * as THREE from 'three';
+import { createNoise3D } from 'simplex-noise';
 import { SUBSTRATES } from './presets.js';
-import { mulberry32, fbm, clamp, smoothstep } from './noise.js';
+import { mulberry32, clamp, smoothstep } from './noise.js';
+
+// Seeded dune noise — the shared `fbm()` helper in noise.js is broken (its
+// integer hash overflows JS float precision and always returns 0, so it has no
+// gradient at all). Dunes use simplex-noise directly with a fixed seed, which
+// keeps them deterministic like the rest of the repo without silently
+// changing the wood generator, which is the other `fbm` consumer.
+const duneNoise = createNoise3D(mulberry32(0x0d0e));
+
+/**
+ * Paintbrush glyph for the paint/erase cursor. The canvas is drawn with the
+ * brush TIP at the exact centre, so a centre-anchored sprite puts the tip on
+ * the cursor point — the same point `paintDress()` paints.
+ */
+let _brushCursorTex = null;
+function brushCursorTexture() {
+  if (_brushCursorTex) return _brushCursorTex;
+  const S = 256;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d');
+  const rr = (x, y, w, h, r) => {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  };
+  ctx.translate(S / 2, S / 2);
+  ctx.rotate(-Math.PI / 4); // leans up-right, leaving the cursor point clear
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  // bristles — tip sits exactly at the canvas centre (the cursor point)
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(20, -11, 44, -11);
+  ctx.lineTo(50, -11);
+  ctx.lineTo(50, 11);
+  ctx.lineTo(44, 11);
+  ctx.quadraticCurveTo(20, 11, 0, 0);
+  ctx.closePath();
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.stroke();
+  // ferrule
+  rr(50, -12, 21, 24, 4);
+  ctx.fillStyle = '#cfcfcf';
+  ctx.fill();
+  ctx.stroke();
+  // handle
+  rr(71, -10, 52, 20, 10);
+  ctx.fillStyle = '#9a9a9a';
+  ctx.fill();
+  ctx.stroke();
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  _brushCursorTex = tex;
+  return tex;
+}
 
 export class Substrate {
   constructor(scene, tank) {
@@ -10,6 +72,9 @@ export class Substrate {
     this.dressType = 'sand';
     this.baseTint = 0;
     this.dressTint = 0;
+    // custom colour overrides (hex strings); null = use the swatch tints
+    this.baseCustom = null;
+    this.dressCustom = null;
 
     this.brush = { kind: 'raise', tool: 'sculpt', radius: 8, strength: 1.1 };
     this.grainSeed = 1234;
@@ -48,6 +113,18 @@ export class Substrate {
   }
 
   _build() {
+    // cursors are rebuilt with every mesh; dispose their materials & geometries
+    // first so tank resizes don't leak GPU memory
+    if (this.cursor) {
+      this.cursor.traverse((o) => {
+        o.geometry?.dispose();
+        o.material?.dispose();
+      });
+      this.cursor = null;
+    }
+    this.brushCursor?.material.dispose();
+    this.brushCursor = null;
+
     for (let i = this.group.children.length - 1; i >= 0; i--) this.group.remove(this.group.children[i]);
     const { w, d } = this.tank.state;
     const sw = this.segW, sd = this.segD;
@@ -185,11 +262,27 @@ export class Substrate {
       new THREE.CircleGeometry(0.12, 12),
       new THREE.MeshBasicMaterial({ color: 0xd9b36a, transparent: true, opacity: 0.9, depthTest: false, side: THREE.DoubleSide })
     );
-    dot.rotation.x = -Math.PI / 2;
+    // NO rotation on the dot: it is parented to the already floor-rotated ring,
+    // so a second -90° X would stand the disc upright (it read as a vertical
+    // "tick" inside the flat ring). Radii don't overlap, so no z-fighting.
     dot.renderOrder = 21;
     ring.add(dot);
     this.cursor = ring;
+    this.cursorDot = dot;
     this.group.add(ring);
+
+    // Paint/erase adds a brush glyph on top of the footprint ring — the tip
+    // sits exactly on the cursor point (the canvas glyph is centred on its
+    // tip), so "paints where you point" is visible, and like the ring it
+    // scales with the brush radius via [ ] / the size slider.
+    const brushTex = brushCursorTexture();
+    this.brushCursor = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: brushTex, transparent: true, depthTest: false, depthWrite: false })
+    );
+    this.brushCursor.renderOrder = 22;
+    this.brushCursor.visible = false;
+    this.brushCursor.center.set(0.5, 0.5);
+    this.group.add(this.brushCursor);
   }
 
   _makeTextures() {
@@ -201,18 +294,23 @@ export class Substrate {
     this.splatTex = new THREE.CanvasTexture(this._splatCanvas);
     this.splatTex.wrapS = this.splatTex.wrapT = THREE.ClampToEdgeWrapping;
 
-    this._dressTex = this._grainTexture(this.dressType, this.dressTint);
-    this._baseTex = this._grainTexture(this.baseType, this.baseTint);
+    this._dressTex = this._grainTexture(this.dressType, this.dressTint, this.dressCustom);
+    this._baseTex = this._grainTexture(this.baseType, this.baseTint, this.baseCustom);
   }
 
-  _grainTexture(typeKey, tint) {
+  /**
+   * Procedural grain texture for one substrate layer. `customHex`, when set,
+   * replaces the tint swatch as the base colour (the Custom picker path);
+   * pass `null`/undefined to use the tint list.
+   */
+  _grainTexture(typeKey, tint, customHex = null) {
     const def = SUBSTRATES[typeKey];
     const S = 1024;
     const cv = document.createElement('canvas');
     cv.width = cv.height = S;
     const ctx = cv.getContext('2d');
     const rnd = mulberry32((this.grainSeed || 1234) + tint * 77 + typeKey.length * 31);
-    const col = new THREE.Color(tint >= 0 ? def.tints[tint % def.tints.length] : def.base);
+    const col = new THREE.Color(customHex || (tint >= 0 ? def.tints[tint % def.tints.length] : def.base));
     const [r, g, b] = [col.r * 255, col.g * 255, col.b * 255];
 
     ctx.fillStyle = `rgb(${r | 0},${g | 0},${b | 0})`;
@@ -276,19 +374,26 @@ export class Substrate {
     };
     mat.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, uniforms);
+      // The splat mask covers the tank exactly once, so it must sample the
+      // plain mesh UV. vMapUv carries the base map's repeat (rx×ry) — sampling
+      // the splat with it shifted/multiplied every painted blob away from the
+      // cursor (a dot painted at the centre appeared near the back-left edge).
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vSplatUv;')
+        .replace('#include <uv_vertex>', '#include <uv_vertex>\nvSplatUv = uv;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D splatMap;\nuniform sampler2D dressMap;\nuniform vec2 uDressRepeat;\nuniform float uDressRough;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D splatMap;\nuniform sampler2D dressMap;\nuniform vec2 uDressRepeat;\nuniform float uDressRough;\nvarying vec2 vSplatUv;')
         .replace(
           '#include <map_fragment>',
           `#include <map_fragment>
-          float splat = texture2D( splatMap, vMapUv ).r;
+          float splat = texture2D( splatMap, vSplatUv ).r;
           vec3 dressCol = texture2D( dressMap, vMapUv * uDressRepeat ).rgb;
           diffuseColor.rgb = mix( diffuseColor.rgb, dressCol, splat );`
         )
         .replace(
           '#include <roughnessmap_fragment>',
           `#include <roughnessmap_fragment>
-          float splatR = texture2D( splatMap, vMapUv ).r;
+          float splatR = texture2D( splatMap, vSplatUv ).r;
           roughnessFactor = mix( roughnessFactor, uDressRough, splatR );`
         );
     };
@@ -300,13 +405,13 @@ export class Substrate {
     // streaks because its features are wide & low-contrast
     if (!this._sideMat) {
       this._sideMat = new THREE.MeshStandardMaterial({
-        map: Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed),
+        map: Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed, this.baseCustom),
         roughness: SUBSTRATES[this.baseType].rough,
         metalness: 0,
         dithering: true,
       });
     } else {
-      this._sideMat.map = Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed);
+      this._sideMat.map = Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed, this.baseCustom);
       this._sideMat.needsUpdate = true;
     }
     this._sideMat.roughness = SUBSTRATES[this.baseType].rough;
@@ -315,14 +420,14 @@ export class Substrate {
   }
 
   /** Side-cut texture: dark base with soft horizontal stratification bands. */
-  static _makeSideTexture(typeKey, tint, grainSeed = 1234) {
+  static _makeSideTexture(typeKey, tint, grainSeed = 1234, customHex = null) {
     const def = SUBSTRATES[typeKey];
     const S = 512;
     const cv = document.createElement('canvas');
     cv.width = S; cv.height = S;
     const ctx = cv.getContext('2d');
     const rnd = mulberry32((grainSeed || 1234) + tint * 31 + typeKey.length * 17 + 977);
-    const col = new THREE.Color(def.base);
+    const col = new THREE.Color(customHex || (tint >= 0 ? def.tints[tint % def.tints.length] : def.base));
     // sides read darker than the lit top face
     col.multiplyScalar(0.55);
     const [r, g, b] = [col.r * 255, col.g * 255, col.b * 255];
@@ -480,19 +585,27 @@ export class Substrate {
   // ---- splat painting ----
   paintDress(cx, cz, radius, erase) {
     const { w, d } = this.tank.state;
+    // Mask space maps the tank w×d onto the square canvas exactly once (the
+    // shader samples it with the raw mesh UV). A world-circle is therefore an
+    // ellipse in mask space on non-square tanks — draw it under a compensating
+    // scale so the painted blob is round on the floor.
     const px = ((cx + w / 2) / w) * 512;
     const py = (1 - (cz + d / 2) / d) * 512;
-    const pr = Math.max(6, (radius / w) * 512);
+    const prx = Math.max(3, (radius / w) * 512);
+    const pry = Math.max(3, (radius / d) * 512);
     const ctx = this._splatCtx;
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.scale(1, pry / prx);
     ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
-    const gr = ctx.createRadialGradient(px, py, pr * 0.35, px, py, pr);
+    const gr = ctx.createRadialGradient(0, 0, prx * 0.35, 0, 0, prx);
     gr.addColorStop(0, `rgba(255,255,255,${erase ? 1 : 0.9})`);
     gr.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = gr;
     ctx.beginPath();
-    ctx.arc(px, py, pr, 0, Math.PI * 2);
+    ctx.arc(0, 0, prx, 0, Math.PI * 2);
     ctx.fill();
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
     this._syncSplat();
   }
 
@@ -525,10 +638,13 @@ export class Substrate {
       }
     };
 
+    // Every preset is sampled 180°-rotated about the tank centre (u/v flipped)
+    // so it reads correctly from the default camera at +Z: the classic slope
+    // rises toward the BACK of the tank, not toward the viewer.
     for (let j = 0; j <= sd; j++) {
       for (let i = 0; i <= sw; i++) {
         const x = i * cellW, z = j * cellD;
-        const u = x / w, v = z / d;
+        const u = 1 - x / w, v = 1 - z / d;
         let val = base;
         if (name === 'slope') {
           const t = smoothstep(0.05, 0.95, v);
@@ -545,16 +661,34 @@ export class Substrate {
           const slope = smoothstep(0, 0.9, v);
           val = base + maxH * (0.75 * slope * (1 - g * 0.85) + 0.18 * g);
         } else if (name === 'dune') {
-          val = base + maxH * (0.35 + 0.65 * fbm(x * 0.02, 7, z * 0.03, 4)) * (0.4 + 0.6 * v);
+          // a touch bumpier than the original flat sand field: two simplex
+          // octaves (a broad dune swell + a finer ripple train), while keeping
+          // the same gentle character — the reduced blur below preserves them
+          const swell = duneNoise(x * 0.022, 7, z * 0.03);
+          const ripple = duneNoise(x * 0.075, 31, z * 0.09);
+          const f = (swell * 0.82 + ripple * 0.18 + 1) * 0.5; // noise is -1..1
+          val = base + maxH * (0.32 + 0.68 * f) * (0.4 + 0.6 * v);
         }
         H[j * W + i] = val + (name === 'dune' || name === 'island' ? (rnd() - 0.5) * 0.4 : 0);
       }
     }
-    blur(name === 'terrace' ? 3 : 5);
+    blur(name === 'terrace' ? 3 : name === 'dune' ? 4 : 5);
     // clamp
     const cap = h - 1;
     for (let k = 0; k < H.length; k++) H[k] = clamp(H[k], 0, cap);
     this._refresh();
+    return { prev };
+  }
+
+  /**
+   * Full substrate reset ("Reset" button): level the heightfield back to the
+   * base depth, wipe the painted top-dress mask, and report `prev` for undo.
+   * Material / tint / custom-colour choices are intentionally untouched.
+   */
+  resetSubstrate() {
+    const prev = this.heights.slice();
+    this.clearDress();
+    this.reset(this._baseDepth, true);
     return { prev };
   }
 
@@ -566,6 +700,7 @@ export class Substrate {
     return {
       base: this.baseType, dress: this.dressType,
       baseTint: this.baseTint, dressTint: this.dressTint,
+      baseCustom: this.baseCustom, dressCustom: this.dressCustom,
       heights: Array.from(this.heights, (v) => Math.round(v * 100) / 100),
       splat: splatCanvas.toDataURL('image/png'),
     };
@@ -574,8 +709,11 @@ export class Substrate {
   async deserialize(data) {
     this.baseType = data.base || 'soil';
     this.dressType = data.dress || 'sand';
-    this._baseTex = this._grainTexture(this.baseType, this.baseTint);
-    this._dressTex = this._grainTexture(this.dressType, this.dressTint);
+    // custom overrides arrive from save data; older files simply omit them
+    this.baseCustom = data.baseCustom ?? null;
+    this.dressCustom = data.dressCustom ?? null;
+    this._baseTex = this._grainTexture(this.baseType, this.baseTint, this.baseCustom);
+    this._dressTex = this._grainTexture(this.dressType, this.dressTint, this.dressCustom);
     await new Promise((res) => {
       const img = new Image();
       img.onload = () => {
@@ -595,8 +733,8 @@ export class Substrate {
 
   refreshMaterial() {
     const oldBase = this._baseTex, oldDress = this._dressTex;
-    this._baseTex = this._grainTexture(this.baseType, this.baseTint);
-    this._dressTex = this._grainTexture(this.dressType, this.dressTint);
+    this._baseTex = this._grainTexture(this.baseType, this.baseTint, this.baseCustom);
+    this._dressTex = this._grainTexture(this.dressType, this.dressTint, this.dressCustom);
     const u = this._uniforms;
     if (u) {
       u.dressMap.value = this._dressTex;
@@ -610,7 +748,7 @@ export class Substrate {
     // side texture follows the base type too
     if (this._sideMat) {
       const oldSide = this._sideMat.map;
-      this._sideMat.map = Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed);
+      this._sideMat.map = Substrate._makeSideTexture(this.baseType, this.baseTint, this.grainSeed, this.baseCustom);
       this._sideMat.roughness = SUBSTRATES[this.baseType].rough;
       this._sideMat.needsUpdate = true;
       oldSide?.dispose();
@@ -619,12 +757,46 @@ export class Substrate {
     if (oldDress) oldDress.dispose();
   }
 
+  /**
+   * Show the correct brush cursor for the active tool. Sculpting gets the flat
+   * footprint ring; paint/erase gets the same footprint ring plus a paintbrush
+   * glyph whose bristle tip sits exactly on the cursor point — the point
+   * `paintDress()` paints. Everything is sized by the shared brush radius, so
+   * `[` / `]` and either size slider grow and shrink the paintbrush just like
+   * the sculpt cursor.
+   */
   updateCursor(point, visible) {
+    this._cursorPt = visible && point ? { x: point.x, y: point.y, z: point.z } : null;
+    const erase = this.brush.tool === 'erase';
+    const paintMode = this.brush.tool === 'paint' || erase;
     this.cursor.visible = visible;
+    this.brushCursor.visible = visible && paintMode;
     if (!visible) return;
-    this.cursor.position.set(point.x, point.y + 0.4, point.z);
-    const s = this.brush.radius;
-    this.cursor.scale.set(s, s, s);
+    const y = point.y + 0.4;
+    const r = this.brush.radius;
+    // the ring is the painted footprint in both modes: exact radius, tinted
+    // per tool so the mode reads at a glance even before the glyph loads
+    this.cursor.position.set(point.x, y, point.z);
+    this.cursor.scale.set(r, r, r);
+    const tint = erase ? 0xe06557 : 0xd9b36a;
+    this.cursor.material.color.set(tint);
+    this.cursor.material.opacity = paintMode ? 0.6 : 0.85;
+    this.cursorDot?.material.color.set(tint);
+    if (paintMode) {
+      // sprite quads span 1 world unit per scale; the glyph runs ~0.48 of its
+      // canvas from bristle tip to handle end, so 4.2×r makes the brush the
+      // same visual length as the ring's diameter at the same radius
+      const s = clamp(r * 4.2, 12, 140);
+      this.brushCursor.position.set(point.x, y, point.z);
+      this.brushCursor.scale.set(s, s, 1);
+      this.brushCursor.material.color.set(tint);
+    }
+  }
+
+  /** Re-run the cursor update after tool/size changed without a pointer move. */
+  refreshCursor() {
+    const p = this._cursorPt;
+    if (p) this.updateCursor(p, true);
   }
 
   dispose() {
@@ -634,5 +806,10 @@ export class Substrate {
     this._baseTex?.dispose();
     this._dressTex?.dispose();
     this.splatTex.dispose();
+    this.cursor?.traverse((o) => {
+      o.geometry?.dispose();
+      o.material?.dispose();
+    });
+    this.brushCursor?.material.dispose();
   }
 }
