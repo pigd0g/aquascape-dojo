@@ -220,6 +220,12 @@ window.addEventListener('keydown', (e) => {
 
 // ---------------- sculpt & hover interaction ----------------
 let sculpting = false;
+// Set when a stroke stamp actually edits the heightfield. Paint/erase are
+// purely cosmetic (they only draw into the splat canvas), so they must never
+// re-seat objects — a settle would lift anything whose base sits below the
+// current terrain surface (e.g. tall plants clamped down at spawn, or objects
+// lowered with the gizmo) and read as "painting raised the substrate".
+let strokeSculpted = false;
 let lastSculpt = 0;
 const shiftDown = { value: false };
 window.addEventListener('keydown', (e) => {
@@ -301,6 +307,7 @@ placement.onHover = (ndc, e) => {
       }
       if (shiftDown.value) brush.kind = brush.kind === 'raise' ? 'lower' : 'raise';
       substrate.applyBrush(t.point.x, t.point.z, brush, 1);
+      strokeSculpted = true;
       placement.settleAll();
       scheduleChips();
     }
@@ -310,13 +317,18 @@ placement.onHover = (ndc, e) => {
 };
 
 window.addEventListener('pointerdown', (e) => {
-  if (!viewOnly && tool === 'brush' && e.button === 0 && e.target === renderer.domElement) sculpting = true;
+  if (!viewOnly && tool === 'brush' && e.button === 0 && e.target === renderer.domElement) {
+    sculpting = true;
+    strokeSculpted = false;
+  }
 });
 window.addEventListener('pointerup', () => {
   if (sculpting) {
     sculpting = false;
-    // settle objects after sculpt stroke
-    placement.settleAll();
+    // settle objects only after a stroke that actually moved the heightfield —
+    // paint/erase just recolour the top dress, so they leave every object alone
+    if (strokeSculpted) placement.settleAll();
+    strokeSculpted = false;
     scheduleChips();
   }
 });
