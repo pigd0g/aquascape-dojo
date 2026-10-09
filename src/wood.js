@@ -24,12 +24,19 @@ function tubeAlong(points, radiusFn, opts = {}) {
   const positions = [], indices = [], uvs = [];
   const v = new THREE.Vector3(), nrm = new THREE.Vector3();
 
+  // The exact ring-radius pipeline, reused to publish collision radii at the
+  // spine control points (tubeRadii). One evaluation per control point: at
+  // t = k/(n-1) the CatmullRom curve passes exactly through points[k].
+  const effR = (t) => {
+    let r = radiusFn(t);
+    if (flare && t < 0.22) r *= 1 + (1 - t / 0.22) * 0.5; // root flare
+    return r * (1 + (fbm(t * 9, points[0].x * 3.7, points[0].z * 3.1, 2) - 0.5) * gnarl);
+  };
+
   for (let i = 0; i <= n; i++) {
     const t = i / n;
     const c = frames.tangents[i], nn = frames.normals[i], bb = frames.binormals[i];
-    let r = radiusFn(t);
-    if (flare && t < 0.22) r *= 1 + (1 - t / 0.22) * 0.5; // root flare
-    r *= 1 + (fbm(t * 9, points[0].x * 3.7, points[0].z * 3.1, 2) - 0.5) * gnarl;
+    const r = effR(t);
     const center = curve.getPoint(t);
     for (let j = 0; j <= radial; j++) {
       const a = (j / radial) * Math.PI * 2;
@@ -101,6 +108,10 @@ function tubeAlong(points, radiusFn, opts = {}) {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
+  // radius of the emitted surface at each spine control point — the wood
+  // collision chain in the fish school reads these (a single AABB would
+  // swallow most of a long, diagonal log)
+  geo.userData.tubeRadii = points.map((_, k) => effR(k / (points.length - 1)));
   return geo;
 }
 
@@ -130,13 +141,19 @@ function growBranch(rnd, opts, depth, origin, dir, len, rad, out, parentPiece = 
   segs.push(p.clone());
 
   const last = depth >= opts.maxDepth;
-  out.geos.push(tubeAlong(segs, (t) => radiusAt(rad, t), {
+  const tube = tubeAlong(segs, (t) => radiusAt(rad, t), {
     flare: depth === 0,
     jag: last ? 1.0 : 0.2,   // dead twigs end in torn snaps
     radial: 7,
     rnd,
-  }));
-  out.pieces.push({ spine: segs.map((q) => q.toArray()), r: rad * 1.05, parent: parentPiece });
+  });
+  out.geos.push(tube);
+  out.pieces.push({
+    spine: segs.map((q) => q.toArray()),
+    radii: tube.userData.tubeRadii, // exact emitted surface radius per point
+    r: rad * 1.05,
+    parent: parentPiece,
+  });
   const myIdx = out.pieces.length - 1;
   const curve = new THREE.CatmullRomCurve3(segs);
 
@@ -197,8 +214,14 @@ function makeLog(def, rnd, out) {
     return r;
   };
   out.logProf = prof;
-  out.geos.push(tubeAlong(spine, prof, { radial: 9, jag: 1.0, gnarl: 0.5, rnd }));
-  out.pieces.push({ spine: out.logSpine, r: rBase * 1.2, parent: -1 });
+  const logTube = tubeAlong(spine, prof, { radial: 9, jag: 1.0, gnarl: 0.5, rnd });
+  out.geos.push(logTube);
+  out.pieces.push({
+    spine: out.logSpine,
+    radii: logTube.userData.tubeRadii,
+    r: rBase * 1.2,
+    parent: -1,
+  });
 
   // large forks splitting off the trunk (the dramatic Y-shapes)
   const forkN = 1 + ((rnd() * 2) | 0);
@@ -224,12 +247,18 @@ function makeLog(def, rnd, out) {
     dir.addScaledVector(tan, -dir.dot(tan)).normalize(); // stick out sideways
     const bl = prof(t) * (1.1 + rnd() * 1.4);
     const pts = [at, at.clone().addScaledVector(dir, bl)];
-    out.geos.push(tubeAlong(
+    const stubTube = tubeAlong(
       pts,
       (tt) => prof(t) * (0.62 - tt * 0.34),
       { radial: 6, jag: 1.0, gnarl: 0.3, rnd }
-    ));
-    out.pieces.push({ spine: pts.map((q) => q.toArray()), r: prof(t) * 0.66, parent: 0 });
+    );
+    out.geos.push(stubTube);
+    out.pieces.push({
+      spine: pts.map((q) => q.toArray()),
+      radii: stubTube.userData.tubeRadii,
+      r: prof(t) * 0.66,
+      parent: 0,
+    });
   }
 }
 
@@ -282,8 +311,14 @@ export function createWood(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
           d.normalize();
           p = p.clone().addScaledVector(d, plen);
         }
-        out.geos.push(tubeAlong(pts, (t) => trunkR * 0.4 * (1 - t * 0.82), { radial: 5, gnarl: 0.12, jag: 0.6, rnd }));
-        out.pieces.push({ spine: pts.map((q) => q.toArray()), r: trunkR * 0.45, parent: out.pieces.length - 1 });
+        const tendrilTube = tubeAlong(pts, (t) => trunkR * 0.4 * (1 - t * 0.82), { radial: 5, gnarl: 0.12, jag: 0.6, rnd });
+        out.geos.push(tendrilTube);
+        out.pieces.push({
+          spine: pts.map((q) => q.toArray()),
+          radii: tendrilTube.userData.tubeRadii,
+          r: trunkR * 0.45,
+          parent: out.pieces.length - 1,
+        });
       }
     }
   }
@@ -304,6 +339,14 @@ export function createWood(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
   const bb = geo.boundingBox;
   const lift = -bb.min.y;
   geo.translate(0, lift, 0);
+
+  // collision chains for the fish school: every limb's spine (post-lift) with
+  // the exact surface radius at each control point. A long diagonal log's AABB
+  // covers most of a tank floor; these capsules only cover the bark itself.
+  const colliders = out.pieces.map((p) => ({
+    pts: p.spine.map((a) => [a[0], a[1] + lift, a[2]]),
+    radii: p.radii ?? p.spine.map(() => p.r),
+  }));
 
   // per-seed tint choice (reroll swaps colour family too)
   const tints = def.tints ?? [def.barkColor ?? def.bark];
@@ -331,6 +374,7 @@ export function createWood(typeKey, seed = (Math.random() * 1e9) | 0, opts = {})
 
   mesh.userData = { kind: 'wood', typeKey: key, seed, def, sizeBase: size.clone(), kgPerL: 0.62 };
   mesh.userData.pieces = out.pieces; // limb spines for tooling/tests
+  mesh.userData.colliders = colliders; // capsule chains — fish collision
   return mesh;
 }
 
