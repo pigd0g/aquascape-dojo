@@ -12,6 +12,7 @@ import {
   loadLayout,
   deleteLayout,
   preferredName,
+  uniqueLayoutName,
   storageAvailable,
   LAYOUT_NAME_MAX,
 } from './storage.js';
@@ -54,6 +55,7 @@ export class LayoutUI {
     this.openPop = document.getElementById('open-pop');
     this.nameInput = document.getElementById('save-name');
     this.saveMsg = document.getElementById('save-msg');
+    this.saveAsBtn = document.getElementById('save-as');
     this.openList = document.getElementById('open-list');
     this.fileInput = document.getElementById('file-load');
 
@@ -83,6 +85,7 @@ export class LayoutUI {
     document.getElementById('save-confirm').addEventListener('click', () =>
       this._commitSave(),
     );
+    this.saveAsBtn.addEventListener('click', () => this._commitSaveAs());
     this.nameInput.addEventListener('input', () => this._refreshSaveHint());
     this.nameInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -97,7 +100,8 @@ export class LayoutUI {
     const usable = storageAvailable();
     this.nameInput.disabled = !usable;
     document.getElementById('save-confirm').disabled = !usable;
-    this.nameInput.value = preferredName();
+    this.saveAsBtn.disabled = !usable;
+    this.nameInput.value = this.currentName || preferredName();
     if (usable) this._refreshSaveHint();
     else
       this._setMsg(
@@ -126,18 +130,23 @@ export class LayoutUI {
       return;
     }
     const existing = listLayouts().find((l) => l.name === name);
-    if (existing) {
+    if (existing && name === this.currentName) {
+      // re-saving what's open is the expected action — no clobber alarm
+      this._setMsg(`Updates "${name}" — saved ${relTime(existing.savedAt)}.`, '');
+    } else if (existing) {
       this._setMsg(
-        `Overwrites "${name}" saved ${relTime(existing.savedAt)}.`,
+        `Overwrites "${name}" saved ${relTime(existing.savedAt)}. Use Save as for a copy.`,
         'warn',
       );
     } else {
-      this._setMsg('Stays in this browser — Export for a file.', '');
+      this._setMsg('Saves as a new layout — Export for a file.', '');
     }
   }
 
-  _commitSave() {
-    const name = this.nameInput.value.trim();
+  /** Shared commit path for Save and Save as. */
+  _commitSave({ asNew = false } = {}) {
+    const typed = this.nameInput.value.trim();
+    const name = asNew ? uniqueLayoutName(typed) : typed;
     const res = saveLayout(name, this.getData());
     if (!res.ok) {
       const reason =
@@ -150,8 +159,15 @@ export class LayoutUI {
       return;
     }
     this.currentName = res.name;
+    this.nameInput.value = res.name;
     this.closeSave();
-    flashButton(this.saveBtn, res.overwrote ? `✓ ${res.name}` : '✓ Saved');
+    if (asNew) flashButton(this.saveBtn, `✓ ${res.name}`);
+    else flashButton(this.saveBtn, res.overwrote ? `✓ ${res.name}` : '✓ Saved');
+  }
+
+  /** Save a copy under a free variant of the typed name (never clobbers). */
+  _commitSaveAs() {
+    this._commitSave({ asNew: true });
   }
 
   // ================= open =================

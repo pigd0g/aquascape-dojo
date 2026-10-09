@@ -52,7 +52,7 @@ npm run build    # production bundle in dist/
 ### Water & output
 - **💧 Water** fills the tank to a chosen level with animated surface ripples, and the fish school appears with it.
 - **📷** downloads a PNG snapshot of the current view *and* copies the matching image-model prompt to the clipboard, so the shot can be restyled into a photorealistic aquarium.
-- **💾 Save / 📂 Open** keep named layouts in browser storage (`tank1` by default) — Open also lists them with age, size and a delete button.
+- **💾 Save / 📂 Open** keep named layouts in browser storage (`tank1` by default) — Open also lists them with age, size and a delete button. **Save as** writes a copy under a free name (auto-numbered: `tank1` → `tank1 2`) so a new version or another tank never clobbers an existing save.
 - **📥 Import / 📤 Export** (inside Open) move the same layout to and from a `.json` file — for backups or sharing between browsers.
 
 ### View only

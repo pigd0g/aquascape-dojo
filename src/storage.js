@@ -100,6 +100,24 @@ export function listLayouts() {
   return out;
 }
 
+/** A free variant of `base` for Save as: "tank1" → "tank1 2", "tank1 2" → "tank1 3"
+ *  (trimmed so the suffix still fits inside NAME_MAX). '' stays ''. */
+export function uniqueLayoutName(base) {
+  const clean = cleanName(base);
+  if (!clean) return clean;
+  const taken = new Set(listLayouts().map((l) => l.name));
+  if (!taken.has(clean)) return clean;
+  // numbered names advance their version; anything else starts at " 2"
+  const m = clean.match(/^(.*?)\s+(\d{1,3})$/);
+  const stem = m ? m[1] : clean;
+  for (let n = (m ? Number(m[2]) : 1) + 1; n < 1000; n++) {
+    const suffix = ` ${n}`;
+    const candidate = stem.slice(0, NAME_MAX - suffix.length) + suffix;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return clean; // pathological: nothing free — Save-as then behaves like Save
+}
+
 /** Save (or overwrite) a layout. Returns { ok } or { ok: false, reason }. */
 export function saveLayout(name, data) {
   const clean = cleanName(name);
