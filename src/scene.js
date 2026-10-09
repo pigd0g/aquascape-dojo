@@ -3,6 +3,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { mulberry32 } from "./noise.js";
+import { buildShell, makeInstanced, RX, RZ } from "./shell.js";
+import { Occluder } from "./occlusion.js";
+import { buildDecor } from "./decor.js";
 
 // ---------------- dojo themes ----------------
 // One table drives every surface colour and every light, so the ☀️/🌙 toggle
@@ -29,6 +32,7 @@ const EVENING = {
   fill: 0.35,
   rim: 0.85,
   lamp: 2600,
+  bench: 6000, // warm wash over the back-wall workbench display
   exposure: 1.22,
 };
 const DAY = {
@@ -53,19 +57,13 @@ const DAY = {
   fill: 0.95,
   rim: 1.15,
   lamp: 0,
+  bench: 0, // day light already reaches the back wall
   exposure: 1.1,
 };
 
 // ---------------- room dimensions ----------------
-// All values in cm (world unit = cm). Human-scale hall: the roof sits 3 m
-// above the floor, so even a 100 cm tank on its stand clears it with headroom.
-const RX = 170,
-  RZ = 150,
-  RH = 300; // half extents + wall/roof height
-const WAIN = 27; // wainscot cap height
-const PY = WAIN,
-  PH = RH - PY - 16; // shoji band: base y, panel height — top rail tucks
-// under the ceiling coffer (whose lowest bars hang at RH-15)
+// All values in cm (world unit = cm). RX / RZ / RH now live in shell.js so
+// the shell builder and this module agree on the room extents.
 
 // ---------------- canvas textures ----------------
 
@@ -198,43 +196,6 @@ function makeLeafGeo() {
   return geo;
 }
 
-/** Pack a list of {x,y,z,sx,sy,sz} world-aligned boxes into one InstancedMesh.
- *  sx / sz are extents along the world X / Z axes (no rotation support needed —
- *  walls, wainscot, shoji frames and beams are all axis-aligned). */
-function makeInstanced(boxes, material, { cast = false, receive = true } = {}) {
-  const im = new THREE.InstancedMesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    material,
-    boxes.length,
-  );
-  const m = new THREE.Matrix4();
-  const p = new THREE.Vector3(),
-    q = new THREE.Quaternion(),
-    s = new THREE.Vector3();
-  boxes.forEach((b, i) => {
-    p.set(b.x, b.y, b.z);
-    s.set(b.sx, b.sy, b.sz);
-    m.compose(p, q, s);
-    im.setMatrixAt(i, m);
-  });
-  im.instanceMatrix.needsUpdate = true;
-  im.castShadow = cast;
-  im.receiveShadow = receive;
-  return im;
-}
-
-/** Split a wall length into n shoji panels with pillars between + at the ends. */
-function layoutPanels(len, n, pw = 56, pil = 6) {
-  const m = (len - (n * pw + (n + 1) * pil)) / 2;
-  const panels = [],
-    pillars = [];
-  for (let i = 0; i < n; i++)
-    panels.push(-len / 2 + m + pil + pw / 2 + i * (pw + pil));
-  for (let i = 0; i <= n; i++)
-    pillars.push(-len / 2 + m + pil / 2 + i * (pw + pil));
-  return { panels, pillars };
-}
-
 export function createScene(container) {
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
@@ -335,6 +296,17 @@ export function createScene(container) {
   spot.target = spotTarget;
   scene.add(spot);
 
+  // display wash over the front-wall workbench — evening-only accent (its
+  // intensity lives in the theme tables as `bench`, like the lamps). No
+  // shadows: the shelf is a soft scenic wash, not the tank's hero light.
+  const benchSpot = new THREE.SpotLight(0xffe0b0, 0, 700, 0.92, 1, 2);
+  benchSpot.position.set(0, 178, 88);
+  const benchTarget = new THREE.Object3D();
+  benchTarget.position.set(0, 44, 126);
+  scene.add(benchTarget);
+  benchSpot.target = benchTarget;
+  scene.add(benchSpot);
+
   // ================================================================
   // ---- dojo room ----
   // All planes face inward, so orbiting outside the room gives a clean
@@ -429,150 +401,31 @@ export function createScene(container) {
   // shadows would stripe the wood floor at glancing light)
   room.add(makeInstanced(matBoxes, tatamiMat));
 
-  // ---- walls (inward-facing planes) ----
-  const wallDefs = [
-    { cx: 0, cz: -RZ, nx: 0, nz: 1 }, // back
-    { cx: 0, cz: RZ, nx: 0, nz: -1 }, // front
-    { cx: -RX, cz: 0, nx: 1, nz: 0 }, // left
-    { cx: RX, cz: 0, nx: -1, nz: 0 }, // right
-  ];
-  for (const w of wallDefs) {
-    const alongX = w.nz !== 0;
-    const geo = new THREE.PlaneGeometry(alongX ? 2 * RX : 2 * RZ, RH);
-    const wall = new THREE.Mesh(geo, wallMat);
-    wall.position.set(w.cx, RH / 2, w.cz);
-    wall.rotation.y = alongX
-      ? w.nz > 0
-        ? 0
-        : Math.PI
-      : w.nx > 0
-        ? Math.PI / 2
-        : -Math.PI / 2;
-    wall.receiveShadow = true;
-    room.add(wall);
-  }
+  // ---- walls (inward-facing planes), wainscot, shoji + coffered ceiling ----
+  // All shell geometry is built by shell.js, one group per wall so the
+  // occlusion culler below can hide a blocking wall (with its wainscot and
+  // shoji) as a unit; the ceiling is one group too.
+  const shell = buildShell(room, {
+    wallMat,
+    wainscotMat,
+    frameMat,
+    beamMat,
+    ceilMat,
+    paperMat,
+  });
 
-  // ---- wainscoting: base rail + cap rail + vertical slats on every wall ----
-  const wain = [];
-  for (const w of wallDefs) {
-    const alongX = w.nz !== 0;
-    const len = alongX ? 2 * RX : 2 * RZ;
-    for (const y of [2, WAIN - 2]) {
-      wain.push({
-        x: w.cx + w.nx * 1.5,
-        y,
-        z: w.cz + w.nz * 1.5,
-        sx: alongX ? len : 3,
-        sy: 4,
-        sz: alongX ? 3 : len,
-      });
-    }
-    const n = Math.max(6, Math.round(len / 7));
-    for (let i = 0; i < n; i++) {
-      const u = -len / 2 + (len / n) * (i + 0.5);
-      wain.push({
-        x: w.cx + w.nx * 0.85 + (alongX ? u : 0),
-        y: 13.5,
-        z: w.cz + w.nz * 0.85 + (alongX ? 0 : u),
-        sx: alongX ? 1.3 : 1.7,
-        sy: 19,
-        sz: alongX ? 1.7 : 1.3,
-      });
-    }
-  }
-  room.add(makeInstanced(wain, wainscotMat)); // shell: receives, never casts
-
-  // ---- shoji screens: back wall (5 panels) + both side walls (4 each) ----
-  // Lattice: pillars between panels, top & bottom rails, then a fine kumiko
-  // grid (5 cols × ~25 rows — cells stay square via the auto-computed rows)
-  // over glowing paper.
-  const frameBoxes = [];
-  const PAPER_W = 50,
-    BAR = 1.2;
-  const paperGeo = new THREE.PlaneGeometry(PAPER_W, PH - 6);
-
-  function addShojiWall(cx, cz, nx, nz, len, n) {
-    const alongX = nz !== 0;
-    const outward = alongX ? nz : nx; // +1 if wall faces +z/+x
-    const off = 0.6 * outward; // lift frames/paper off the wall
-    // helper: place a box at (u = along-wall coord, y, v = depth offset from wall)
-    const at = (u, y, v, sx, sy, sz) =>
-      frameBoxes.push({
-        x: cx + (alongX ? u : v),
-        y,
-        z: cz + (alongX ? v : u),
-        sx,
-        sy,
-        sz,
-      });
-    const { panels, pillars } = layoutPanels(len, n, PAPER_W, 6);
-    // pillars frame each panel
-    for (const u of pillars)
-      at(
-        u,
-        PY + PH / 2,
-        off,
-        alongX ? 6 : 1.4 + 0.6,
-        PH,
-        alongX ? 1.4 + 0.6 : 6,
-      );
-    // top & bottom rails
-    at(0, PY + 0.8, off, alongX ? len : 3, 3, alongX ? 3 : len);
-    at(0, PY + PH - 0.8, off, alongX ? len : 3, 3, alongX ? 3 : len);
-    // per panel: paper plane + a fine kumiko grid of vertical & horizontal bars
-    for (const u of panels) {
-      const paper = new THREE.Mesh(paperGeo, paperMat);
-      paper.position.set(
-        cx + (alongX ? u : off + 0.4 * outward),
-        PY + PH / 2,
-        cz + (alongX ? off + 0.4 * outward : u),
-      );
-      paper.rotation.y = alongX
-        ? nz > 0
-          ? 0
-          : Math.PI
-        : nx > 0
-          ? Math.PI / 2
-          : -Math.PI / 2;
-      room.add(paper);
-      const pw = PAPER_W,
-        phh = PH - 6,
-        cols = 5,
-        rows = Math.max(4, Math.round(phh / (pw / cols))); // cells stay square
-      // vertical bars
-      for (let i = 1; i < cols; i++) {
-        const bu = u - pw / 2 + (pw / cols) * i;
-        at(
-          bu,
-          PY + PH / 2,
-          off + 0.05 * outward,
-          alongX ? BAR : BAR + 0.6,
-          phh,
-          alongX ? BAR + 0.6 : BAR,
-        );
-      }
-      // horizontal bars
-      for (let j = 1; j < rows; j++) {
-        const by = PY + 3 + (phh / rows) * j;
-        at(
-          u,
-          by,
-          off + 0.05 * outward,
-          alongX ? pw : BAR + 0.6,
-          BAR,
-          alongX ? BAR + 0.6 : pw,
-        );
-      }
-    }
-  }
-
-  addShojiWall(0, -RZ, 0, 1, 2 * RX, 5); // back — the hero wall
-  addShojiWall(-RX, 0, 1, 0, 2 * RZ, 4); // left
-  addShojiWall(RX, 0, -1, 0, 2 * RZ, 4); // right
-  // Shoji paper diffuses light — the room shell must NOT throw hard slat/beam
-  // shadows into the tank area (they read as crawling bands when orbiting).
-  // The shell still RECEIVES shadows from the tank and plant.
-  room.add(makeInstanced(frameBoxes, frameMat));
+  // ---- camera-aware "x-ray" culling (occlusion.js) ----
+  // The shell and display furniture hide while they stand between the camera
+  // and the tank — orbiting outside the room no longer needs peeking around
+  // walls, and the front-wall workbench stops blocking the default view.
+  const culler = new Occluder(camera);
+  const wallHandles = {
+    back: culler.add(shell.wallGroups.back),
+    front: culler.add(shell.wallGroups.front),
+    left: culler.add(shell.wallGroups.left),
+    right: culler.add(shell.wallGroups.right),
+  };
+  culler.add(shell.ceilingGroup);
 
   // warm point lights in the upper room — the evening lamp glow
   // (in day mode their intensity drops to 0; the glowing shoji paper takes over)
@@ -637,56 +490,14 @@ export function createScene(container) {
   }
   plant.position.set(RX - 33, 2.4, RZ - 62); // resting on the tatami ring, front-right
   room.add(plant);
+  culler.add(plant); // big corner plant: hides when it blocks the tank view
 
-  // ---- ceiling: coffered kumiko beam grid ----
-  // Offsets hang below the roof line RH, so the coffer keeps identical bar
-  // sizes/spacing (and the kumiko cells their scale) at any room height.
-  const beamBoxes = [];
-  // primary beams spanning X (thick) at intervals along Z
-  for (const z of [-120, -60, 0, 60, 120])
-    beamBoxes.push({ x: 0, y: RH - 9.5, z, sx: 2 * RX, sy: 5, sz: 4.4 });
-  // primary beams spanning Z — world extents, no rotation needed
-  for (const x of [-136, -68, 0, 68, 136])
-    beamBoxes.push({ x, y: RH - 11.4, z: 0, sx: 3, sy: 3.4, sz: 2 * RZ });
-  // fine secondary lattice: thin bars between each pair of primary beams
-  for (const [a, b] of [
-    [-120, -60],
-    [-60, 0],
-    [0, 60],
-    [60, 120],
-  ]) {
-    const step = (b - a) / 3;
-    for (let i = 1; i <= 2; i++) {
-      const z = a + step * i;
-      beamBoxes.push({ x: 0, y: RH - 13.6, z, sx: 2 * RX, sy: 1.8, sz: 1.4 });
-    }
-  }
-  for (const [a, b] of [
-    [-136, -68],
-    [-68, 0],
-    [0, 68],
-    [68, 136],
-  ]) {
-    const step = (b - a) / 3;
-    for (let i = 1; i <= 2; i++) {
-      const x = a + step * i;
-      beamBoxes.push({ x, y: RH - 14.2, z: 0, sx: 1.4, sy: 1.8, sz: 2 * RZ });
-    }
-  }
-  // perimeter rail where walls meet the ceiling
-  beamBoxes.push({ x: 0, y: RH - 5.5, z: -RZ + 1.5, sx: 2 * RX, sy: 3, sz: 3 });
-  beamBoxes.push({ x: 0, y: RH - 5.5, z: RZ - 1.5, sx: 2 * RX, sy: 3, sz: 3 });
-  beamBoxes.push({ x: -RX + 1.5, y: RH - 5.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
-  beamBoxes.push({ x: RX - 1.5, y: RH - 5.5, z: 0, sx: 3, sy: 3, sz: 2 * RZ });
-  room.add(makeInstanced(beamBoxes, beamMat)); // shell: receives, never casts
-
-  const ceiling = new THREE.Mesh(
-    new THREE.PlaneGeometry(2 * RX, 2 * RZ),
-    ceilMat,
-  );
-  ceiling.rotation.x = Math.PI / 2; // faces down
-  ceiling.position.y = RH;
-  room.add(ceiling);
+  // ---- display decor: front-wall workbench (wood / rock / plant samples)
+  // ---- + potted plant clusters in the back-wall corners + back-wall still
+  // ---- life — added to `room` so they ride setStageY with the floor they
+  // ---- stand on, and registered with the culler so each piece hides while
+  // ---- it blocks the tank view (the painting follows the back wall)
+  const decor = buildDecor(room, culler, wallHandles);
 
   scene.add(room);
 
@@ -725,6 +536,7 @@ export function createScene(container) {
     rim.intensity = T.rim;
     lampA.intensity = T.lamp;
     lampB.intensity = T.lamp;
+    benchSpot.intensity = T.bench;
     renderer.toneMappingExposure = T.exposure;
   }
   setTheme(false);
@@ -761,5 +573,7 @@ export function createScene(container) {
     setTankFocus,
     setTheme,
     key,
+    decor,
+    culler, // per-frame x-ray culling; main.js wires the tank + ticks it
   };
 }

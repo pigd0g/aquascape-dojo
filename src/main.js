@@ -22,6 +22,7 @@ const substrate = new Substrate(scene, tank);
 const placement = new Placement(scene, camera, renderer, substrate);
 placement.setOrbit(controls);
 const fish = new FishSchool(scene, tank, substrate, placement);
+sceneMgr.culler.setTank(tank); // x-ray culling needs the tank extents
 window.__dojo = { tank, substrate, placement, fish, sceneMgr }; // debug/testing handle
 
 // ---------------- theme ----------------
@@ -478,6 +479,7 @@ function loop() {
   controls.update();
   tank.tick(dt);
   fish.tick(dt);
+  sceneMgr.culler.tick(); // x-ray: hide walls/shell/decor blocking the tank
   renderer.render(scene, camera);
 
   // Hide the CSS boot screen once the scene is really on screen (2 painted
