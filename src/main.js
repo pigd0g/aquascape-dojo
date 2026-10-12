@@ -65,7 +65,7 @@ const setToolUI = (tool) => {
   btn('tool-brush').classList.toggle('active', tool === 'brush');
   let text;
   if (tool !== 'brush') {
-    text = 'Drag items from the library onto the tank · click to select · RMB orbit · Shift+RMB pan · G / R / S = move, rotate, scale';
+    text = 'Drag from the library · click select · Shift+click multi-select · drag to move the set · RMB orbit · G / R / S transform · Ctrl+D duplicate · D drop · ⌫ delete';
   } else if (substrate.brush.tool === 'paint') {
     text = 'Paint the top dress · [ ] brush size · click-drag on the substrate · RMB orbit · Shift+RMB pan';
   } else if (substrate.brush.tool === 'erase') {
@@ -220,6 +220,19 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---------------- sculpt & hover interaction ----------------
+/**
+ * True when a key press is aimed at a text-entry control, where the letter
+ * shortcuts must stay out of the way. Range sliders, buttons and checkboxes are
+ * *not* text entry, so ⌫/D/G/R/S keep working right after using a panel control.
+ */
+function isTextEntry(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag !== 'INPUT') return false;
+  return el.type !== 'range' && el.type !== 'checkbox' && el.type !== 'radio' && el.type !== 'button';
+}
+
 let sculpting = false;
 // Set when a stroke stamp actually edits the heightfield. Paint/erase are
 // purely cosmetic (they only draw into the splat canvas), so they must never
@@ -231,7 +244,7 @@ let lastSculpt = 0;
 const shiftDown = { value: false };
 window.addEventListener('keydown', (e) => {
   shiftDown.value = e.shiftKey;
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (isTextEntry(e.target)) return;
   if (e.key === '[' || e.key === ']') {
     // brush size is shared by the sculpt ring and the paintbrush cursor, and
     // the dress + sculpt sliders both mirror it
@@ -379,7 +392,7 @@ setTimeout(updateChipsNow, 400);
 
 // selection tooling keyboard
 window.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (isTextEntry(e.target)) return;
   // V toggles view-only from anywhere, including while view-only is on
   if (e.key === 'v' || e.key === 'V') {
     if (!e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -401,7 +414,7 @@ window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     if (k === 'd') {
       e.preventDefault();
-      if (placement.selected) placement.duplicate(placement.selected);
+      placement.duplicateMany(placement.selection); // whole selection at once
     } else if (k === 'z') {
       e.preventDefault();
       e.shiftKey ? placement.redo() : placement.undo();
@@ -411,16 +424,18 @@ window.addEventListener('keydown', (e) => {
     }
     return;
   }
-  // every remaining shortcut edits the layout — inert while view-only
-  if (viewOnly) return;
+  // every remaining shortcut edits the layout — inert while view-only, and
+  // never on Alt/Option combos (system & browser shortcuts, AltGr characters)
+  if (viewOnly || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === 'g') setModeUI('translate');
   else if (k === 'r') setModeUI('rotate');
   else if (k === 's') setModeUI('scale');
   else if (k === 'escape') { placement.select(null); setToolUI(tool); }
   else if (k === 'e') { placement.rerollSelected(); }
+  else if (k === 'd') { placement.dropMany(placement.selection); } // drop / re-seat
   else if (k === 'delete' || k === 'backspace') {
-    if (placement.selected) placement.deleteObj(placement.selected);
+    placement.deleteObjs(placement.selection); // whole selection at once
   }
 });
 

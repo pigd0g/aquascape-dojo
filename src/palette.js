@@ -478,16 +478,18 @@ export class Palette {
   // ---- inspector (per-object settings) ----
   _bindInspector() {
     this.inspector = document.getElementById('inspector');
-    this.placement.onSelection = (obj) => this._showInspector(obj);
+    this.placement.onSelection = (sel) => this._showInspector(sel);
   }
 
   /** Re-render inspector panel for the current selection (e.g. after gizmo drop). */
   refreshInspector() {
-    if (this.placement.selected) this._showInspector(this.placement.selected);
+    this._showInspector(this.placement.selection);
   }
 
   /** Lightweight live update of slider positions during gizmo drags (no re-render). */
   liveInspector() {
+    // with a multi-selection the summary panel is shown: nothing live to update
+    if (this.placement.selection.length !== 1) return;
     const obj = this.placement.selected;
     if (!obj || this.inspector.classList.contains('hidden')) return;
     const q = (id) => this.inspector.querySelector('#' + id);
@@ -499,8 +501,69 @@ export class Palette {
     if (ry) { ry.value = ((Math.round(THREE.MathUtils.radToDeg(obj.rotation.y))) + 360) % 360; q('o-in-ry2').value = ry.value; }
   }
 
-  _showInspector(obj) {
+  /**
+   * Summary panel for a multi-selection: bulk actions only, because the
+   * per-object sliders below would be ambiguous. Click an object (or Esc) to
+   * narrow back down to one and edit it normally.
+   */
+  _showMultiInspector(list) {
     const box = this.inspector;
+    const count = { rock: 0, wood: 0, plant: 0 };
+    let rerollable = 0;
+    for (const o of list) {
+      const k = o.userData.kindKey;
+      count[k] = (count[k] ?? 0) + 1;
+      if (k === 'rock' || k === 'wood') rerollable++;
+    }
+    const parts = [['rock', '🪨'], ['wood', '🪵'], ['plant', '🌿']]
+      .filter(([k]) => count[k])
+      .map(([k, em]) => `${em} ${count[k]}`);
+
+    box.classList.remove('hidden');
+    box.innerHTML = `
+      <div class="ttl"><span>⬚ ${list.length} selected <span class="badge">${parts.join(' · ')}</span></span><span class="x" title="Deselect">✕</span></div>
+
+      <div class="row3">
+        <button class="btn" id="in-dup">Duplicate all</button>
+        <button class="btn" id="in-settle">Drop all</button>
+        <button class="btn warn" id="in-del">Delete all</button>
+      </div>
+      <div class="${rerollable ? 'row3' : 'row2'}" style="margin-top:8px">
+        ${rerollable ? `<button class="btn" id="in-reroll">🎲 Reroll${rerollable > 1 ? ` ${rerollable}` : ''}</button>` : ''}
+        <button class="btn" id="in-flat">⚖ Reset tilt</button>
+        <button class="btn" id="in-north">⥂ Face front</button>
+      </div>
+
+      <p class="note">Shift+click to add or remove objects · drag any of them to move the whole set · the gizmo transforms the set around its centre · click one to edit it alone.</p>
+      <p class="note">Ctrl/⌘+D duplicate · D drop · ⌫ delete — every action applies to the whole selection.</p>
+    `;
+
+    const q = (s) => box.querySelector(s);
+    q('.x').addEventListener('click', () => this.placement.select(null));
+    q('#in-dup').addEventListener('click', () => this.placement.duplicateMany(list));
+    q('#in-del').addEventListener('click', () => this.placement.deleteObjs(list));
+    q('#in-settle').addEventListener('click', () => this.placement.dropMany(list));
+    q('#in-reroll')?.addEventListener('click', () => this.placement.rerollSelected());
+    q('#in-north')?.addEventListener('click', () => {
+      for (const o of list) o.rotation.y = 0;
+      this.placement._changed();
+    });
+    q('#in-flat')?.addEventListener('click', () => {
+      for (const o of list) {
+        o.rotation.x = 0;
+        o.rotation.z = 0;
+        if (o.userData.autoY !== false) this.placement.settleOne(o);
+      }
+      this.placement._changed();
+    });
+  }
+
+  _showInspector(sel) {
+    const box = this.inspector;
+    // callers pass a single object or the whole selection array
+    const list = Array.isArray(sel) ? sel.filter(Boolean) : sel ? [sel] : [];
+    if (list.length > 1) return this._showMultiInspector(list);
+    const obj = list[0];
     if (!obj) { box.classList.add('hidden'); box.innerHTML = ''; return; }
     const u = obj.userData;
     const typeDef = u.def;

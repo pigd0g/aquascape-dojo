@@ -17,7 +17,9 @@ export class Placement {
     this.substrate = substrate;
 
     this.objects = [];
-    this.selected = null;
+    // ordered multi-selection: the LAST entry is the "active" object (the one
+    // the inspector and the single-object gizmo bind to); `selected` is a getter
+    this.selection = [];
     this.undoStack = [];
     this.redoStack = [];
     this.onChange = null; // set by main
@@ -29,6 +31,20 @@ export class Placement {
     this.group.name = 'placed';
     scene.add(this.group);
 
+    // selection visuals: an outline box per selected object (the active one
+    // also carries the gizmo)
+    this._outlineRoot = new THREE.Group();
+    this._outlineRoot.name = 'selection';
+    scene.add(this._outlineRoot);
+    this._boxes = []; // [{ h: Box3Helper, o: object }]
+
+    // invisible pivot: with several objects selected the gizmo attaches here
+    // (at the selection centroid) and the drag delta is applied to every member
+    this._pivot = new THREE.Object3D();
+    this._pivot.visible = false;
+    scene.add(this._pivot);
+    this._groupStart = null; // { pos, quat, scale, objs: [{ o, pos, quat, scale }] }
+
     // transform gizmo
     this.gizmo = new TransformControls(camera, renderer.domElement);
     this.gizmo.setSize(0.85);
@@ -37,11 +53,35 @@ export class Placement {
     this.gizmo.addEventListener('dragging-changed', (e) => {
       // pause orbit while dragging
       this.orbit && (this.orbit.enabled = !e.value);
-      if (!e.value) {
+      if (e.value) return;
+      if (this._groupStart) {
+        // group drag finished: clamp every member, re-centre the pivot, one undo
+        for (const it of this._groupStart.objs) this._clampInside(it.o);
+        this._groupStart = null;
+        this._pivotFromSelection();
+        this._pushUndo('transform', { ids: this.selection.map((o) => o.userData.id) });
+      } else {
         this._clampInside(this.selected);
         this._pushUndo('transform', { id: this.selected?.userData.id, before: null });
       }
+      this._refreshOutlines();
     });
+    this.gizmo.addEventListener('mouseDown', () => {
+      // snapshot the pre-drag state of the whole selection (group drags only)
+      if (this.selection.length < 2) { this._groupStart = null; return; }
+      this._groupStart = {
+        pos: this._pivot.position.clone(),
+        quat: this._pivot.quaternion.clone(),
+        scale: this._pivot.scale.clone(),
+        objs: this.selection.map((o) => ({
+          o,
+          pos: o.position.clone(),
+          quat: o.quaternion.clone(),
+          scale: o.scale.clone(),
+        })),
+      };
+    });
+    this.gizmo.addEventListener('objectChange', () => this._applyGroupDelta());
 
     // drag-drop state
     this._ray = new THREE.Raycaster();
@@ -131,65 +171,180 @@ export class Placement {
   }
 
   // ================= selection =================
+  /** The active (last-clicked) selected object; null when nothing is selected. */
+  get selected() {
+    return this.selection[this.selection.length - 1] ?? null;
+  }
+
+  /** Replace the selection with a single object (`null` clears it). */
   select(obj) {
-    if (this.viewOnly) obj = null; // never show a gizmo in view-only mode
-    if (this.selected === obj) return;
-    this.selected = obj || null;
-    if (obj) {
-      this.gizmo.attach(obj);
-      this.gizmo.visible = true;
-      this.gizmo.enabled = true;
+    this.selectMany(obj ? [obj] : []);
+  }
+
+  /** Replace the whole selection (deduped, click order preserved). */
+  selectMany(list) {
+    const next = [];
+    for (const o of list || []) if (o && !next.includes(o)) next.push(o);
+    this.selection = this.viewOnly ? [] : next; // never show a gizmo in view-only mode
+    this._syncSelection();
+  }
+
+  /** Shift+click: put an object into the selection, or take it out again. */
+  toggleSelect(obj) {
+    if (!obj || this.viewOnly) return;
+    const i = this.selection.indexOf(obj);
+    if (i >= 0) this.selection.splice(i, 1); // removed: active falls back to the previous
+    else this.selection.push(obj);
+    this._syncSelection();
+  }
+
+  isSelected(obj) {
+    return this.selection.includes(obj);
+  }
+
+  /**
+   * Push the selection into the gizmo, the outline boxes and the inspector.
+   * One object: the gizmo binds to it. Several: it binds to the centroid pivot
+   * and the members are outlined.
+   */
+  _syncSelection() {
+    if (this.selection.length > 1) {
+      this._pivotFromSelection();
+      this.gizmo.attach(this._pivot);
+    } else if (this.selected) {
+      this.gizmo.attach(this.selected);
     } else {
       this.gizmo.detach();
     }
-    this.onSelection && this.onSelection(obj);
+    this._syncOutlines();
+    this.onSelection && this.onSelection(this.selection);
     this.syncRerollBtn();
   }
 
-  /** Show the top-bar Reroll button only for re-rollables (rock / wood). */
+  /** Centre the pivot on the selection with a clean (world-aligned) transform. */
+  _pivotFromSelection() {
+    const p = this._pivot;
+    p.position.set(0, 0, 0);
+    p.quaternion.identity();
+    p.scale.set(1, 1, 1);
+    const c = new THREE.Vector3();
+    const box = new THREE.Box3();
+    for (const o of this.selection) {
+      box.setFromObject(o).getCenter(c);
+      p.position.add(c);
+    }
+    p.position.multiplyScalar(1 / Math.max(1, this.selection.length));
+    p.updateMatrixWorld(true);
+  }
+
+  /**
+   * Apply the pivot's live transform to the whole selection. `delta` maps the
+   * pre-drag pivot frame onto the current one, so the same matrix drives
+   * translate, rotate and scale (rotate/scale pivot about the centroid).
+   */
+  _applyGroupDelta() {
+    const S = this._groupStart;
+    if (!S) return; // single-object drag: the gizmo transforms the object itself
+    const delta = new THREE.Matrix4()
+      .compose(this._pivot.position, this._pivot.quaternion, this._pivot.scale)
+      .multiply(new THREE.Matrix4().compose(S.pos, S.quat, S.scale).invert());
+    const m = new THREE.Matrix4();
+    for (const it of S.objs) {
+      m.compose(it.pos, it.quat, it.scale).premultiply(delta);
+      m.decompose(it.o.position, it.o.quaternion, it.o.scale);
+    }
+    this._refreshOutlines();
+  }
+
+  /** Rebuild the outline boxes (one per selected object). */
+  _syncOutlines() {
+    for (const b of this._boxes) {
+      this._outlineRoot.remove(b.h);
+      b.h.geometry.dispose();
+      b.h.material.dispose();
+    }
+    this._boxes.length = 0;
+    if (this.selection.length < 2 || this.viewOnly) return;
+    for (const o of this.selection) {
+      const h = new THREE.Box3Helper(new THREE.Box3().setFromObject(o), 0xd9b36a);
+      h.material.depthTest = false; // stay readable through glass & hardscape
+      h.material.transparent = true;
+      h.material.opacity = 0.9;
+      h.renderOrder = 999;
+      this._outlineRoot.add(h);
+      this._boxes.push({ h, o });
+    }
+  }
+
+  /** Keep the outline boxes glued to their objects after a transform/settle. */
+  _refreshOutlines() {
+    for (const b of this._boxes) b.h.box.setFromObject(b.o);
+  }
+
+  /** Show the top-bar Reroll button whenever any selected object is re-rollable. */
   syncRerollBtn() {
     const b = document.getElementById('act-reroll');
     if (!b) return;
-    const u = this.selected?.userData;
-    b.hidden = !u || (u.kindKey !== 'rock' && u.kindKey !== 'wood');
+    b.hidden = !this.selection.some(
+      (o) => o.userData.kindKey === 'rock' || o.userData.kindKey === 'wood'
+    );
   }
 
-  /** Re-roll the selected rock/wood in place (shared by toolbar + inspector). */
+  /**
+   * Re-roll every selected rock/wood in place (shared by the E key, toolbar and
+   * inspector). Rocks rebuild on the same mesh; wood grows a fresh object that
+   * is swapped into the roster and the selection, so the set survives.
+   */
   rerollSelected() {
     if (!this.canEdit) return null;
-    const obj = this.selected;
-    if (!obj) return;
-    const u = obj.userData;
-    if (u.kindKey !== 'rock' && u.kindKey !== 'wood') return;
-    const ns = (Math.random() * 1e9) | 0;
+    const targets = this.selection.filter(
+      (o) => o.userData.kindKey === 'rock' || o.userData.kindKey === 'wood'
+    );
+    if (!targets.length) return null;
 
-    if (u.kindKey === 'rock') {
-      // in-place: geometry + material rebuilt on the same mesh, so the
-      // selection, gizmo and transform are untouched. Only the noise region
-      // moves — proportions, colour and rotation stay as the user set them.
-      u.seed = ns;
-      rebuildRock(obj, { seedOffset: seedToOffset(ns) });
-      if (u.autoY !== false) this.settleOne(obj);
-      this._changed();
-      this.onSelection && this.onSelection(obj);
-      return obj;
+    const newWoodIds = [];
+    let active = null;
+    for (const obj of targets) {
+      const ns = (Math.random() * 1e9) | 0;
+      const u = obj.userData;
+
+      if (u.kindKey === 'rock') {
+        // in-place: geometry + material rebuilt on the same mesh, so the
+        // selection, gizmo and transform are untouched. Only the noise region
+        // moves — proportions, colour and rotation stay as the user set them.
+        u.seed = ns;
+        rebuildRock(obj, { seedOffset: seedToOffset(ns) });
+        if (u.autoY !== false) this.settleOne(obj);
+        active = obj;
+        continue;
+      }
+
+      const fresh = rerollWood(obj, ns);
+      fresh.position.copy(obj.position);
+      fresh.rotation.copy(obj.rotation);
+      fresh.scale.copy(obj.scale);
+      fresh.userData.id = u.id;
+      fresh.userData.kindKey = u.kindKey;
+      fresh.userData.autoY = u.autoY;
+      fresh.spawnScale = obj.spawnScale;
+      fresh.spawnRotY = obj.spawnRotY;
+      // swap in place so the rest of the selection keeps its order & identity
+      const oi = this.objects.indexOf(obj);
+      const si = this.selection.indexOf(obj);
+      this.group.remove(obj);
+      disposeObj(obj);
+      this.group.add(fresh);
+      if (oi >= 0) this.objects[oi] = fresh;
+      if (si >= 0) this.selection[si] = fresh;
+      this.settleOne(fresh, true);
+      newWoodIds.push(fresh.userData.id);
+      active = fresh;
     }
 
-    const fresh = rerollWood(obj, ns);
-    fresh.position.copy(obj.position);
-    fresh.rotation.copy(obj.rotation);
-    fresh.scale.copy(obj.scale);
-    fresh.userData.id = u.id;
-    fresh.userData.kindKey = u.kindKey;
-    fresh.userData.autoY = u.autoY;
-    this._removeInternal(obj);
-    this.group.add(fresh);
-    this.objects.push(fresh);
-    this.settleOne(fresh, true);
-    this.select(fresh);
-    this._pushUndo('add', { id: fresh.userData.id });
+    if (newWoodIds.length) this._pushUndo('add', { ids: newWoodIds });
+    this._syncSelection();
     this._changed();
-    return fresh;
+    return active;
   }
 
   _setupGizmoMode(mode) {
@@ -205,9 +360,9 @@ export class Placement {
   }
 
   // ================= picking & movement =================
-  _groundRay(ndc, objs) {
+  _groundRay(ndc, objs, recursive = false) {
     this._ray.setFromCamera(ndc, this.camera);
-    const hits = this._ray.intersectObjects(objs, false);
+    const hits = this._ray.intersectObjects(objs, recursive);
     return hits[0] || null;
   }
 
@@ -245,24 +400,43 @@ export class Placement {
         return;
       }
       const ndc = this._ndc(e);
-      // gizmo priority
-      if (this.selected) {
-        const hit = this._groundRay(ndc, [this.selected]);
+      // gizmo priority: an axis is hovered over one of the selected objects
+      if (this.selection.length) {
+        const hit = this._groundRay(ndc, this.selection, true);
         if (hit && this.gizmo.axis) return; // about to drag via gizmo
       }
+
       const picked = this._pickPlaced(ndc);
-      if (picked) {
-        this.select(picked);
-        this._dragging = { obj: picked, offset: new THREE.Vector3(), z: e.pointerId, moved: false };
-        const t = this._tankRay(ndc);
-        if (t) {
-          this._dragging.offset.copy(picked.position).sub(t.point);
-          this._dragging.offset.y = 0;
-        }
-        el.setPointerCapture(e.pointerId);
+      let collapse = null; // plain click on a member of a set: single it out
+      if (e.shiftKey) {
+        // Shift+click toggles membership; empty water keeps the current set
+        if (!picked) return;
+        const wasSelected = this.isSelected(picked);
+        this.toggleSelect(picked);
+        if (wasSelected) return; // just removed — never start a drag on it
+      } else if (picked) {
+        if (!this.isSelected(picked)) this.select(picked);
+        else if (this.selection.length > 1) collapse = picked;
       } else {
         this.select(null);
+        return;
       }
+
+      // start a drag: one object, or the whole selection when several are in
+      this._dragging = {
+        obj: picked,
+        offset: new THREE.Vector3(),
+        z: e.pointerId,
+        moved: false,
+        collapse,
+        starts: this.selection.map((o) => ({ o, x: o.position.x, z: o.position.z })),
+      };
+      const t = this._tankRay(ndc);
+      if (t) {
+        this._dragging.offset.copy(picked.position).sub(t.point);
+        this._dragging.offset.y = 0;
+      }
+      el.setPointerCapture(e.pointerId);
     });
 
     el.addEventListener('pointermove', (e) => {
@@ -285,21 +459,28 @@ export class Placement {
       // sculpt handled by main via callback
       this.onHover && this.onHover(ndc, e);
 
-      // reposition existing object
+      // reposition the dragged object — and every other selected member with it
       if (this._dragging) {
         const t = this._tankRay(ndc);
         if (t) {
-          const p = t.point.clone().add(this._dragging.offset);
-          const o = this._dragging.obj;
-          o.position.x = p.x;
-          o.position.z = p.z;
-          if (t.onSub) {
-            // heightAt (triangle-exact) rather than the ray hit: the ray may
-            // land on a different cell than the object's footprint center,
-            // which made drops visibly 'snap' onto a cell grid
-            o.position.y = this.substrate.heightAt(o.position.x, o.position.z) + (o.userData.groundOffset ?? 0);
+          const d = this._dragging;
+          const p = t.point.clone().add(d.offset);
+          // one delta for the whole set, so relative offsets are preserved
+          const dx = p.x - d.obj.position.x;
+          const dz = p.z - d.obj.position.z;
+          for (const s of d.starts) {
+            const o = s.o;
+            o.position.x = s.x + dx;
+            o.position.z = s.z + dz;
+            if (t.onSub) {
+              // heightAt (triangle-exact) rather than the ray hit: the ray may
+              // land on a different cell than the object's footprint center,
+              // which made drops visibly 'snap' onto a cell grid
+              o.position.y = this.substrate.heightAt(o.position.x, o.position.z) + (o.userData.groundOffset ?? 0);
+            }
           }
-          this._dragging.moved = true;
+          d.moved = true;
+          this._refreshOutlines();
         }
       }
     });
@@ -314,14 +495,20 @@ export class Placement {
         return;
       }
       if (this._dragging) {
-        if (this._dragging.moved) {
-          const o = this._dragging.obj;
-          o.userData.autoY = undefined; // ground drag = back to auto-altitude
-          this.settleOne(o);
-          this._pushUndo('move', { id: o.userData.id, moved: true });
-          this._changed();
-        }
+        const d = this._dragging;
         this._dragging = null;
+        if (d.moved) {
+          for (const s of d.starts) {
+            const o = s.o;
+            o.userData.autoY = undefined; // ground drag = back to auto-altitude
+            this.settleOne(o);
+          }
+          this._pushUndo('move', { ids: d.starts.map((s) => s.o.userData.id), moved: true });
+          this._changed();
+        } else if (d.collapse) {
+          // plain click on a member of a set: reduce the selection to it
+          this.select(d.collapse);
+        }
       }
     });
   }
@@ -442,8 +629,17 @@ export class Placement {
 
   /** Force a re-seat (clears manual-Y stacking lock). */
   dropOne(obj) {
-    obj.userData.autoY = undefined;
-    this.settleOne(obj);
+    this.dropMany(obj ? [obj] : []);
+  }
+
+  /** Re-seat every object in `list` (the inspector's Drop, the D key). */
+  dropMany(list = this.selection) {
+    if (!this.canEdit) return;
+    for (const obj of [...list]) {
+      if (!obj) continue;
+      obj.userData.autoY = undefined;
+      this.settleOne(obj);
+    }
     this._changed();
   }
 
@@ -474,31 +670,52 @@ export class Placement {
   }
 
   // ================= delete / duplicate =================
-  deleteObj(obj) {
+  /** Delete every object in `list` (defaults to the selection) as one undo step. */
+  deleteObjs(list = this.selection) {
     if (!this.canEdit) return;
-    const i = this.objects.indexOf(obj);
-    if (i >= 0) this.objects.splice(i, 1);
-    if (this.selected === obj) this.select(null);
-    this.group.remove(obj);
-    if (this.selected === obj) this.select(null);
-    disposeObj(obj);
-    this._pushUndo('remove', { snapshot: serializeSingle(obj) }, { snapshotReinsert: true });
+    const snaps = [];
+    for (const obj of [...list]) {
+      if (!obj || !this.objects.includes(obj)) continue;
+      snaps.push(serializeSingle(obj)); // snapshot before the geometry is disposed
+      this._removeInternal(obj, { sync: false });
+    }
+    if (!snaps.length) return;
+    this._syncSelection();
+    this._pushUndo('remove', { snapshots: snaps });
+    this._changed();
   }
 
-  duplicate(obj) {
-    if (!this.canEdit || !obj) return null;
-    const u = obj.userData;
-    const copy = spawnFromData(serializeSingle(obj));
-    if (!copy) return null;
-    copy.position.x += 4;
-    copy.position.z += 4;
-    this.group.add(copy);
-    this.objects.push(copy);
-    this.settleOne(copy, true);
-    this.select(copy);
-    this._pushUndo('add', { id: copy.userData.id });
+  /** Single-object form (inspector button, older call sites). */
+  deleteObj(obj) {
+    if (obj) this.deleteObjs([obj]);
+  }
+
+  /** Duplicate every object in `list` (defaults to the selection) as one undo step. */
+  duplicateMany(list = this.selection) {
+    if (!this.canEdit) return [];
+    const copies = [];
+    for (const obj of [...list]) {
+      if (!obj || !this.objects.includes(obj)) continue;
+      const copy = spawnFromData(serializeSingle(obj));
+      if (!copy) continue;
+      // the same offset for every copy, so a duplicated cluster keeps its shape
+      copy.position.x += 4;
+      copy.position.z += 4;
+      this.group.add(copy);
+      this.objects.push(copy);
+      this.settleOne(copy, true);
+      copies.push(copy);
+    }
+    if (!copies.length) return [];
+    this.selectMany(copies);
+    this._pushUndo('add', { ids: copies.map((c) => c.userData.id) });
     this._changed();
-    return copy;
+    return copies;
+  }
+
+  /** Single-object form (inspector button, Ctrl+D path). */
+  duplicate(obj) {
+    return this.duplicateMany(obj ? [obj] : [])[0] ?? null;
   }
 
   // ================= undo / redo =================
@@ -532,29 +749,31 @@ export class Placement {
   _applyUndo(act, isUndo) {
     switch (act.kind) {
       case 'add': {
-        const obj = this.byId(act.data.id);
-        if (obj) {
-          this._removeInternal(obj);
-          return { kind: 'remove-add', data: { snapshot: serializeSingle(obj) } };
+        // one id or a batch (duplicated set / rerolled wood)
+        const ids = act.data.ids ?? (act.data.id != null ? [act.data.id] : []);
+        const snaps = [];
+        for (const id of ids) {
+          const obj = this.byId(id);
+          if (!obj) continue;
+          snaps.push(serializeSingle(obj));
+          this._removeInternal(obj, { sync: false });
         }
-        return null;
+        if (!snaps.length) return null;
+        this._syncSelection();
+        return { kind: 'remove-add', data: { snapshots: snaps } };
       }
-      case 'remove-add': {
-        const obj = spawnFromData(act.data.snapshot);
-        if (obj) {
-          this.group.add(obj);
-          this.objects.push(obj);
-        }
-        return { kind: 'add', data: { id: obj?.userData.id } };
-      }
+      case 'remove-add':
       case 'remove': {
-        const obj = spawnFromData(act.data.snapshot);
-        if (obj) {
+        const snaps = act.data.snapshots ?? (act.data.snapshot ? [act.data.snapshot] : []);
+        const ids = [];
+        for (const snap of snaps) {
+          const obj = spawnFromData(snap);
+          if (!obj) continue;
           this.group.add(obj);
           this.objects.push(obj);
-          this._changed();
+          ids.push(obj.userData.id);
         }
-        return { kind: 'add', data: { id: obj?.userData.id } };
+        return { kind: 'add', data: { ids } };
       }
       case 'move':
         // best effort: no inverse stored; treat as no-op marker for redo
@@ -570,21 +789,31 @@ export class Placement {
     return this.objects.find((o) => o.userData.id === id) || null;
   }
 
-  _removeInternal(obj) {
+  /** Remove one object from the roster, the selection and the scene (disposed). */
+  _removeInternal(obj, { sync = true } = {}) {
     const i = this.objects.indexOf(obj);
     if (i >= 0) this.objects.splice(i, 1);
-    if (this.selected === obj) this.select(null);
+    const si = this.selection.indexOf(obj);
+    if (si >= 0) {
+      this.selection.splice(si, 1);
+      if (sync) this._syncSelection();
+    }
     this.group.remove(obj);
     disposeObj(obj);
   }
 
   _changed() {
+    // a canvas drag / settle / reroll can move the members: keep the group
+    // gizmo centred on the selection (never called mid-gizmo-drag)
+    if (this.selection.length > 1) this._pivotFromSelection();
+    this._refreshOutlines();
     this.onChange && this.onChange();
   }
 
   /** Replace all objects from save data. */
   loadAll(list) {
-    for (const o of [...this.objects]) this._removeInternal(o);
+    this.selection = [];
+    for (const o of [...this.objects]) this._removeInternal(o, { sync: false });
     for (const snap of list) {
       const obj = spawnFromData(snap);
       if (obj) {
@@ -592,7 +821,7 @@ export class Placement {
         this.objects.push(obj);
       }
     }
-    this.select(null);
+    this._syncSelection();
     this._changed();
   }
 
